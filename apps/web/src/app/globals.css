@@ -142,6 +142,10 @@ body { background: var(--background); }
 :root[data-theme="light"] .topbar { background: rgba(244, 234, 212, 0.78); }
 :root[data-theme="light"] .workspace-switcher, :root[data-theme="light"] .money-tabs, :root[data-theme="light"] .sales-tabs { background: rgba(238, 226, 200, 0.68); }
 :root[data-theme="light"] .workspace-switch.active { color: #6f4708; background: linear-gradient(135deg, rgba(240, 180, 41, 0.26), rgba(255, 251, 241, 0.86)); }
+:root[data-theme="light"] .nav-item-active { color: #684307; border-color: rgba(201, 141, 21, 0.43); background: linear-gradient(90deg, rgba(240, 180, 41, 0.23), rgba(255, 250, 239, 0.68)); }
+:root[data-theme="light"] .nav-item-active svg, :root[data-theme="light"] .nav-item-active kbd { color: #7c5109; }
+:root[data-theme="light"] .nav-item-active kbd { border-color: rgba(137, 92, 15, 0.24); background: rgba(255, 250, 238, 0.8); }
+:root[data-theme="light"] .filter-chip-active, :root[data-theme="light"] .sales-tabs button.active, :root[data-theme="light"] .money-tabs button.active { color: #684307; }
 :root[data-theme="light"] .card { background: rgba(255, 251, 241, 0.9); }
 :root[data-theme="light"] .related-nav { background: rgba(240, 180, 41, 0.08); }
 @media (prefers-reduced-motion: reduce) { .gold-field canvas { opacity: 0.32; } }

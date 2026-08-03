@@ -1,0 +1,260 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  refreshTokens RefreshToken[]
+  accounts      Account[]
+  categories    Category[]
+  transactions  Transaction[]
+  obligations   Obligation[]
+  english       EnglishProgress[]
+  leads         Lead[]
+  calls         CallActivity[]
+  offers        Offer[]
+  followUps     FollowUp[]
+  dailyGoals    DailyGoal[]
+  syncEvents    SyncEvent[]
+  auditLogs     AuditLog[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, expiresAt])
+}
+
+model Account {
+  id             String   @id @default(uuid())
+  userId         String
+  clientId       String
+  name           String
+  type           String
+  currency       String
+  initialBalance Float
+  color          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  userId    String
+  clientId  String
+  name      String
+  kind      String
+  color     String?
+  system    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+}
+
+model Transaction {
+  id                String   @id @default(uuid())
+  userId            String
+  clientId          String
+  accountId         String
+  type              String
+  amount            Float
+  currency          String
+  date              String
+  counterparty      String?
+  categoryId        String?
+  purpose           String?
+  paymentMethod     String?
+  transferToAccountId String?
+  recurring         Boolean  @default(false)
+  status            String
+  incomeSource      String?
+  comment           String?
+  obligationId      String?
+  essential         Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+  @@index([userId, date])
+  @@index([userId, type, status])
+}
+
+model Obligation {
+  id           String   @id @default(uuid())
+  userId       String
+  clientId     String
+  name         String
+  totalAmount  Float
+  paidAmount   Float
+  currency     String
+  dueDate      String
+  recurrence   String
+  comment      String?
+  status       String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+  @@index([userId, dueDate])
+}
+
+model EnglishProgress {
+  id             String   @id @default(uuid())
+  userId         String
+  clientId       String
+  date           String
+  overallProgress Float
+  completedDays  Int
+  activeDay      Int
+  streak         Int
+  studyMinutes   Int
+  payload        Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+  @@index([userId, date])
+}
+
+model Lead {
+  id          String   @id @default(uuid())
+  userId      String
+  clientId    String
+  companyName String
+  contactName String?
+  position    String?
+  phone       String?
+  telegram    String?
+  city        String?
+  niche       String?
+  source      String
+  companyUrl  String?
+  comment     String?
+  status      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+  @@index([userId, source, status])
+}
+
+model CallActivity {
+  id              String   @id @default(uuid())
+  userId          String
+  clientId        String
+  leadId          String
+  attemptNumber   Int
+  dateTime        DateTime
+  result          String
+  whatSaid        String?
+  problem         String?
+  offered         String?
+  objection       String?
+  nextStep        String?
+  nextContactDate String?
+  comment         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+  @@index([userId, dateTime])
+  @@index([userId, result])
+}
+
+model Offer {
+  id              String   @id @default(uuid())
+  userId          String
+  clientId        String
+  leadId          String
+  serviceName     String
+  taskDescription String?
+  amount          Float
+  currency        String
+  probability     Int
+  decisionDate    String?
+  status          String
+  proposalUrl     String?
+  comment         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+  @@index([userId, status])
+}
+
+model FollowUp {
+  id        String   @id @default(uuid())
+  userId    String
+  clientId  String
+  leadId    String
+  date      String
+  reason    String
+  lastResult String?
+  nextStep  String?
+  status    String
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+  @@index([userId, date, status])
+}
+
+model DailyGoal {
+  id        String   @id @default(uuid())
+  userId    String
+  clientId  String
+  date      String
+  kind      String
+  target    Int
+  achieved  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, clientId])
+  @@index([userId, date, kind])
+}
+
+model SyncEvent {
+  id           String   @id @default(uuid())
+  userId       String
+  batchId      String
+  entity       String
+  clientId     String
+  operation    String
+  payloadHash  String
+  createdAt    DateTime @default(now())
+  syncedAt     DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, entity, clientId])
+  @@index([userId, syncedAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  method    String
+  route     String
+  requestId String?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([createdAt, action])
+}

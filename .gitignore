@@ -1,0 +1,12 @@
+node_modules/
+.next/
+dist/
+coverage/
+tsconfig.tsbuildinfo
+.env
+.env.*
+!.env.example
+apps/web/node_modules/
+apps/web/.next/
+apps/api/node_modules/
+apps/api/dist/

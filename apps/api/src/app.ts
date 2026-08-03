@@ -1,0 +1,78 @@
+import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
+import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
+import fastifyJwt from "@fastify/jwt";
+import rateLimit from "@fastify/rate-limit";
+import swagger from "@fastify/swagger";
+import swaggerUi from "@fastify/swagger-ui";
+import { PrismaClient } from "@prisma/client";
+import { randomUUID } from "node:crypto";
+import { config, allowedOrigins } from "./config.js";
+import { createAuth, requireSnapshotRead, requireUser, signAccessToken } from "./auth.js";
+import { buildAssistantSnapshot } from "./snapshot.js";
+import { dateQuery, loginSchema, refreshSchema, snapshotQuery, syncBatchSchema } from "./schemas.js";
+import { hashValue, publicAuditAction } from "./security.js";
+import { moneySummary, salesSummary } from "./domain.js";
+
+type RecordValue = Record<string, unknown>;
+const text = (row: RecordValue, key: string, fallback = "") => typeof row[key] === "string" ? row[key] as string : fallback;
+const num = (row: RecordValue, key: string, fallback = 0) => typeof row[key] === "number" ? row[key] as number : Number(row[key] ?? fallback) || fallback;
+const bool = (row: RecordValue, key: string, fallback = false) => typeof row[key] === "boolean" ? row[key] as boolean : row[key] === "true" ? true : row[key] === "false" ? false : fallback;
+const clientId = (row: RecordValue) => text(row, "id") || text(row, "clientId") || randomUUID();
+const createdAt = (row: RecordValue) => { const value = text(row, "createdAt"); return value ? new Date(value) : new Date(); };
+const dateFilter = (from?: string, to?: string) => from || to ? { date: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {};
+const callDateFilter = (from?: string, to?: string) => from || to ? { dateTime: { ...(from ? { gte: new Date(`${from}T00:00:00.000Z`) } : {}), ...(to ? { lte: new Date(`${to}T23:59:59.999Z`) } : {}) } } : {};
+
+const audit = async (prisma: PrismaClient, request: FastifyRequest, action: string) => { await prisma.auditLog.create({ data: { userId: request.auth?.userId || null, action: publicAuditAction(action), method: request.method, route: request.routeOptions.url ?? request.url, requestId: request.id } }).catch(() => undefined); };
+
+const writeBatch = async (prisma: PrismaClient, userId: string, body: ReturnType<typeof syncBatchSchema.parse>) => {
+  const db = prisma as any;
+  const batchId = body.batchId ?? randomUUID();
+  let accepted = 0;
+  const write = async (entity: string, row: RecordValue, data: RecordValue) => { const stableId = clientId(row); await db[entity].upsert({ where: { userId_clientId: { userId, clientId: stableId } }, create: { ...data, userId, clientId: stableId, createdAt: createdAt(row) }, update: data }); await prisma.syncEvent.upsert({ where: { userId_entity_clientId: { userId, entity, clientId: stableId } }, create: { userId, batchId, entity, clientId: stableId, operation: "upsert", payloadHash: hashValue(JSON.stringify(row)) }, update: { batchId, operation: "upsert", payloadHash: hashValue(JSON.stringify(row)), syncedAt: new Date() } }); accepted += 1; };
+  for (const row of body.accounts) await write("account", row, { name: text(row, "name"), type: text(row, "type", "wallet"), currency: text(row, "currency", "UZS"), initialBalance: num(row, "initialBalance"), color: text(row, "color") || null });
+  for (const row of body.categories) await write("category", row, { name: text(row, "name"), kind: text(row, "kind", "expense"), color: text(row, "color") || null, system: bool(row, "system") });
+  for (const row of body.transactions) await write("transaction", row, { accountId: text(row, "accountId"), type: text(row, "type"), amount: num(row, "amount"), currency: text(row, "currency", "UZS"), date: text(row, "date"), counterparty: text(row, "counterparty") || null, categoryId: text(row, "categoryId") || null, purpose: text(row, "purpose") || null, paymentMethod: text(row, "paymentMethod") || null, transferToAccountId: text(row, "transferToAccountId") || null, recurring: bool(row, "recurring"), status: text(row, "status", "completed"), incomeSource: text(row, "incomeSource") || null, comment: text(row, "comment") || null, obligationId: text(row, "obligationId") || null, essential: bool(row, "essential") });
+  for (const row of body.obligations) await write("obligation", row, { name: text(row, "name"), totalAmount: num(row, "totalAmount"), paidAmount: num(row, "paidAmount"), currency: text(row, "currency", "UZS"), dueDate: text(row, "dueDate"), recurrence: text(row, "recurrence", "once"), comment: text(row, "comment") || null, status: text(row, "status", "active") });
+  for (const row of body.englishProgress) await write("englishProgress", row, { date: text(row, "date"), overallProgress: num(row, "overallProgress"), completedDays: Math.round(num(row, "completedDays")), activeDay: Math.round(num(row, "activeDay")), streak: Math.round(num(row, "streak")), studyMinutes: Math.round(num(row, "studyMinutes")), payload: row.payload ?? undefined });
+  for (const row of body.leads) await write("lead", row, { companyName: text(row, "companyName"), contactName: text(row, "contactName") || null, position: text(row, "position") || null, phone: text(row, "phone") || null, telegram: text(row, "telegram") || null, city: text(row, "city") || null, niche: text(row, "niche") || null, source: text(row, "source", "other"), companyUrl: text(row, "companyUrl") || null, comment: text(row, "comment") || null, status: text(row, "status", "new") });
+  for (const row of body.calls) await write("callActivity", row, { leadId: text(row, "clientId") || text(row, "leadId"), attemptNumber: Math.round(num(row, "attemptNumber", 1)), dateTime: new Date(text(row, "dateTime") || new Date().toISOString()), result: text(row, "result", "no_answer"), whatSaid: text(row, "whatSaid") || null, problem: text(row, "problem") || null, offered: text(row, "offered") || null, objection: text(row, "objection") || null, nextStep: text(row, "nextStep") || null, nextContactDate: text(row, "nextContactDate") || null, comment: text(row, "comment") || null });
+  for (const row of body.offers) await write("offer", row, { leadId: text(row, "clientId") || text(row, "leadId"), serviceName: text(row, "serviceName") || text(row, "serviceId", "Другое"), taskDescription: text(row, "taskDescription") || null, amount: num(row, "amount"), currency: text(row, "currency", "UZS"), probability: Math.max(0, Math.min(100, Math.round(num(row, "probability")))), decisionDate: text(row, "decisionDate") || null, status: text(row, "status", "draft"), proposalUrl: text(row, "proposalUrl") || null, comment: text(row, "comment") || null });
+  for (const row of body.followUps) await write("followUp", row, { leadId: text(row, "clientId") || text(row, "leadId"), date: text(row, "date"), reason: text(row, "reason"), lastResult: text(row, "lastResult") || null, nextStep: text(row, "nextStep") || null, status: text(row, "status", "future"), note: text(row, "note") || null });
+  for (const row of body.dailyGoals) await write("dailyGoal", row, { date: text(row, "date"), kind: text(row, "kind", "calls"), target: Math.round(num(row, "target")), achieved: Math.round(num(row, "achieved")) });
+  return { batchId, accepted, syncedAt: new Date().toISOString() };
+};
+
+export async function buildApp(prisma = new PrismaClient()) {
+  const app = Fastify({ logger: false, requestIdHeader: "x-request-id" });
+  await app.register(helmet);
+  await app.register(cors, { origin: (origin, callback) => { if (!origin || allowedOrigins.includes(origin)) callback(null, true); else callback(new Error("origin_not_allowed"), false); } });
+  await app.register(rateLimit, { max: config.RATE_LIMIT_MAX, timeWindow: config.RATE_LIMIT_WINDOW });
+  await app.register(fastifyJwt, { secret: config.JWT_SECRET });
+  await app.register(swagger, { openapi: { info: { title: "Personal Tracker API", version: "1.0.0", description: "Local-first sync and read-only assistant snapshot API." }, servers: [{ url: "/" }], security: [{ bearerAuth: [] }], components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } } } } });
+  await app.register(swaggerUi, { routePrefix: "/docs" });
+  const auth = createAuth(prisma);
+  app.get("/health", async () => ({ status: "ok", service: "personal-tracker-api", version: "1.0.0" }));
+  app.get("/ready", async (_request, reply) => { try { await prisma.$queryRaw`SELECT 1`; return { status: "ready" }; } catch { return reply.code(503).send({ status: "not_ready" }); } });
+  app.post("/api/v1/auth/login", async (request, reply) => { if (config.API_ENABLED === "false") return reply.code(503).send({ error: "api_disabled" }); const parsed = loginSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "invalid_request" }); const session = await auth.login(parsed.data.email, parsed.data.password); if (!session) return reply.code(401).send({ error: "invalid_credentials" }); return { accessToken: signAccessToken(app, session.userId), refreshToken: session.refreshToken, expiresIn: 900 }; });
+  app.post("/api/v1/auth/refresh", async (request, reply) => { const parsed = refreshSchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ error: "invalid_request" }); const session = await auth.refresh(parsed.data.refreshToken); if (!session) return reply.code(401).send({ error: "invalid_refresh_token" }); return { accessToken: signAccessToken(app, session.userId), expiresIn: 900 }; });
+  app.post("/api/v1/auth/logout", { preHandler: requireUser }, async (request, reply) => { const parsed = refreshSchema.safeParse(request.body); if (parsed.success) await auth.logout(parsed.data.refreshToken); await audit(prisma, request, "auth.logout"); return reply.code(204).send(); });
+  app.get("/api/v1/auth/check", { preHandler: requireUser }, async (request) => ({ authenticated: true, userId: request.auth?.userId, role: request.auth?.role }));
+  app.post("/api/v1/sync/batch", { preHandler: requireUser }, async (request, reply) => { const parsed = syncBatchSchema.safeParse(request.body); if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_batch" }); const result = await writeBatch(prisma, request.auth.userId, parsed.data); await audit(prisma, request, "sync.batch"); return result; });
+  app.get("/api/v1/sync/status", { preHandler: requireUser }, async (request) => { const latest = request.auth?.userId ? await prisma.syncEvent.findFirst({ where: { userId: request.auth.userId }, orderBy: { syncedAt: "desc" } }) : null; return { apiEnabled: config.API_ENABLED === "true", lastSuccessfulSync: latest?.syncedAt ?? null, pending: 0 }; });
+  app.get("/api/v1/transactions", { preHandler: requireUser }, async (request, reply) => { const parsed = dateQuery.safeParse(request.query); if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_query" }); return prisma.transaction.findMany({ where: { userId: request.auth.userId, ...dateFilter(parsed.data.from, parsed.data.to) }, orderBy: { date: "desc" }, take: 500 }); });
+  app.get("/api/v1/transactions/summary", { preHandler: requireUser }, async (request, reply) => { const parsed = dateQuery.safeParse(request.query); if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_query" }); const rows = await prisma.transaction.findMany({ where: { userId: request.auth.userId, ...dateFilter(parsed.data.from, parsed.data.to) } }); return moneySummary(rows); });
+  app.get("/api/v1/accounts", { preHandler: requireUser }, async (request) => prisma.account.findMany({ where: { userId: request.auth?.userId }, orderBy: { createdAt: "asc" } }));
+  app.get("/api/v1/obligations", { preHandler: requireUser }, async (request) => prisma.obligation.findMany({ where: { userId: request.auth?.userId }, orderBy: { dueDate: "asc" } }));
+  app.get("/api/v1/english/progress", { preHandler: requireUser }, async (request) => prisma.englishProgress.findMany({ where: { userId: request.auth?.userId }, orderBy: { date: "desc" }, take: 90 }));
+  app.get("/api/v1/english/summary", { preHandler: requireUser }, async (request) => { const latest = await prisma.englishProgress.findFirst({ where: { userId: request.auth?.userId }, orderBy: { date: "desc" } }); return { progress: latest?.overallProgress ?? 0, completedDays: latest?.completedDays ?? 0, activeDay: latest?.activeDay ?? 0, streak: latest?.streak ?? 0, studyMinutes: latest?.studyMinutes ?? 0 }; });
+  app.get("/api/v1/leads", { preHandler: requireUser }, async (request) => prisma.lead.findMany({ where: { userId: request.auth?.userId }, orderBy: { createdAt: "desc" }, take: 500 }));
+  app.get("/api/v1/calls", { preHandler: requireUser }, async (request, reply) => { const parsed = dateQuery.safeParse(request.query); if (!parsed.success) return reply.code(400).send({ error: "invalid_query" }); return prisma.callActivity.findMany({ where: { userId: request.auth?.userId, ...callDateFilter(parsed.data.from, parsed.data.to) }, orderBy: { dateTime: "desc" }, take: 1000 }); });
+  app.get("/api/v1/followups", { preHandler: requireUser }, async (request) => prisma.followUp.findMany({ where: { userId: request.auth?.userId }, orderBy: { date: "asc" }, take: 500 }));
+  app.get("/api/v1/sales/summary", { preHandler: requireUser }, async (request, reply) => { const parsed = dateQuery.safeParse(request.query); if (!parsed.success) return reply.code(400).send({ error: "invalid_query" }); const [calls, offers] = await Promise.all([prisma.callActivity.findMany({ where: { userId: request.auth?.userId, ...callDateFilter(parsed.data.from, parsed.data.to) } }), prisma.offer.findMany({ where: { userId: request.auth?.userId } })]); return salesSummary(calls, offers); });
+  app.get("/api/v1/dashboard/summary", { preHandler: requireUser }, async (request, reply) => { const parsed = dateQuery.safeParse(request.query); if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_query" }); return buildAssistantSnapshot(prisma, request.auth.userId, { ...parsed.data }); });
+  app.get("/api/v1/assistant/snapshot", { preHandler: requireSnapshotRead }, async (request, reply) => { const parsed = snapshotQuery.safeParse(request.query); if (!parsed.success) return reply.code(400).send({ error: "invalid_query" }); const userId = request.auth?.userId || (await prisma.user.findFirst({ orderBy: { createdAt: "asc" } }))?.id; if (!userId) return reply.code(404).send({ error: "snapshot_user_not_found" }); await audit(prisma, request, "assistant.snapshot"); return buildAssistantSnapshot(prisma, userId, parsed.data); });
+  app.get("/api/v1/export/assistant.json", { preHandler: requireSnapshotRead }, async (request, reply) => { const parsed = snapshotQuery.safeParse(request.query); if (!parsed.success) return reply.code(400).send({ error: "invalid_query" }); const userId = request.auth?.userId || (await prisma.user.findFirst({ orderBy: { createdAt: "asc" } }))?.id; if (!userId) return reply.code(404).send({ error: "snapshot_user_not_found" }); const payload = await buildAssistantSnapshot(prisma, userId, parsed.data); await audit(prisma, request, "assistant.export"); return reply.header("Content-Disposition", "attachment; filename=personal-tracker-assistant-snapshot.json").send(payload); });
+  app.setErrorHandler(async (error, request, reply) => { await audit(prisma, request, "error"); return reply.code((error as { statusCode?: number }).statusCode ?? 500).send({ error: "request_failed", requestId: request.id }); });
+  return app;
+}

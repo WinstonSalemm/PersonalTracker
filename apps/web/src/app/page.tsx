@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,9 +23,11 @@ import { SalesTracker } from "@/components/sales-tracker";
 import { useSalesStore } from "@/store/use-sales-store";
 import { toBase } from "@/lib/money";
 import { ApiSettings } from "@/components/api-settings";
+import { InteractiveGoldField } from "@/components/interactive-gold-field";
 
 type View = "dashboard" | "roadmap" | "day" | "vocabulary" | "mistakes" | "writing" | "speaking" | "tests" | "analytics" | "finance" | "sales" | "settings";
 type Theme = "dark" | "light";
+type Workspace = "english" | "money" | "sales";
 
 const navItems: Array<{ id: View; label: string; icon: LucideIcon; shortcut?: string }> = [
   { id: "dashboard", label: "Обзор", icon: LayoutDashboard, shortcut: "D" },
@@ -39,6 +41,16 @@ const navItems: Array<{ id: View; label: string; icon: LucideIcon; shortcut?: st
   { id: "finance", label: "Money Tracker", icon: Wallet, shortcut: "F" },
   { id: "sales", label: "Продажи", icon: BriefcaseBusiness, shortcut: "S" },
 ];
+
+const englishNavItems = navItems.filter((item) => !["finance", "sales"].includes(item.id));
+const workspaceMeta: Record<Workspace, { label: string; subtitle: string; icon: LucideIcon; entry: View; searchLabel: string }> = {
+  english: { label: "English Roadmap", subtitle: "90-day learning system", icon: Sparkles, entry: "dashboard", searchLabel: "Поиск по English Roadmap" },
+  money: { label: "Money Tracker", subtitle: "Private finance workspace", icon: Wallet, entry: "finance", searchLabel: "Поиск по финансам" },
+  sales: { label: "Sales / Клиенты", subtitle: "Daily outreach workspace", icon: BriefcaseBusiness, entry: "sales", searchLabel: "Поиск по продажам" },
+};
+
+function workspaceForView(view: View): Workspace { return view === "finance" ? "money" : view === "sales" ? "sales" : "english"; }
+function viewForWorkspace(workspace: Workspace): View { return workspaceMeta[workspace].entry; }
 
 const skillMeta: Record<Skill, { label: string; color: string; icon: LucideIcon }> = {
   grammar: { label: "Grammar", color: "#8b5cf6", icon: WandSparkles },
@@ -128,12 +140,17 @@ function EmptyState({ icon: Icon, title, text }: { icon: LucideIcon; title: stri
 
 function AppShell({ children, view, setView, theme, toggleTheme, onCommand }: { children: ReactNode; view: View; setView: (view: View) => void; theme: Theme; toggleTheme: () => void; onCommand: () => void }) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  return <div className="app-shell">
+  const workspace = workspaceForView(view);
+  const activeWorkspace = workspaceMeta[workspace];
+  const workspaceNav: Array<{ id: View; label: string; icon: LucideIcon; shortcut?: string }> = workspace === "english" ? englishNavItems : [{ id: activeWorkspace.entry, label: activeWorkspace.label, icon: activeWorkspace.icon }];
+  const WorkspaceIcon = activeWorkspace.icon;
+  return <div className={cn("app-shell", `workspace-${workspace}`)}>
     <aside className={cn("sidebar", mobileOpen && "sidebar-open")}>
-      <div className="brand"><div className="brand-mark"><Sparkles size={18} /></div><div><strong>English<span>90</span></strong><small>active B1 program</small></div></div>
+      <div className="brand"><div className="brand-mark"><WorkspaceIcon size={18} /></div><div><strong>Personal<span>Tracker</span></strong><small>{activeWorkspace.subtitle}</small></div></div>
       <div className="workspace-switcher" aria-label="Раздел приложения"><button className={cn("workspace-switch", !["finance", "sales"].includes(view) && "active")} onClick={() => setView("dashboard")}><ListChecks size={14} /><span>English Roadmap</span></button><button className={cn("workspace-switch", view === "finance" && "active finance-switch")} onClick={() => setView("finance")}><Wallet size={14} /><span>Money Tracker</span></button><button className={cn("workspace-switch", view === "sales" && "active sales-switch")} onClick={() => setView("sales")}><BriefcaseBusiness size={14} /><span>Sales / Клиенты</span></button></div>
       <div className="sidebar-section-label">Workspace</div>
-      <nav className="nav-list">{navItems.map(({ id, label, icon: Icon, shortcut }) => <button key={id} className={cn("nav-item", view === id && "nav-item-active")} onClick={() => { setView(id); setMobileOpen(false); }}><Icon size={18} /><span>{label}</span>{shortcut && <kbd>{shortcut}</kbd>}</button>)}</nav>
+      <nav className="nav-list">{workspaceNav.map(({ id, label, icon: Icon, shortcut }) => <button key={id} className={cn("nav-item", view === id && "nav-item-active")} onClick={() => { setView(id); setMobileOpen(false); }}><Icon size={18} /><span>{label}</span>{shortcut && <kbd>{shortcut}</kbd>}</button>)}</nav>
+      {workspace !== "english" && <div className="related-workspace"><div className="sidebar-section-label">Связанный раздел</div><button className="nav-item related-nav" onClick={() => { setView(workspace === "sales" ? "finance" : "sales"); setMobileOpen(false); }}>{workspace === "sales" ? <Wallet size={18} /> : <BriefcaseBusiness size={18} />}<span><b>{workspace === "sales" ? "Доходы от сделок" : "Связанные сделки"}</b><small>{workspace === "sales" ? "Money Tracker" : "Sales / Клиенты"}</small></span><ArrowRight size={14} /></button></div>}
       <div className="sidebar-bottom"><div className="sidebar-section-label">Session</div><button className="nav-item" onClick={onCommand}><Command size={18} /><span>Command palette</span><kbd>⌘K</kbd></button><button className="nav-item" onClick={toggleTheme}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}<span>{theme === "dark" ? "Светлая тема" : "Тёмная тема"}</span></button><div className="profile-chip"><div className="avatar">Т</div><div><strong>Тимур</strong><small>A2+ → активный B1</small></div><MoreHorizontal size={16} /></div></div>
     </aside>
     <main className="main-content"><header className="topbar"><button className="icon-button mobile-menu" onClick={() => setMobileOpen((value) => !value)} aria-label="Меню"><Menu size={20} /></button><div className="breadcrumbs"><span>Personal Tracker</span><ChevronRight size={14} /><strong>{navItems.find((item) => item.id === view)?.label ?? "День"}</strong></div><div className="topbar-actions"><button className="search-trigger" onClick={onCommand}><Search size={16} /><span>Поиск по плану</span><kbd>⌘K</kbd></button><button className="icon-button" onClick={toggleTheme} aria-label="Тема">{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button></div></header><div className="content-wrap">{children}</div></main>
@@ -269,13 +286,15 @@ function Settings({ exportData, importData, resetData, resetMoney, resetSales, o
 }
 
 export default function Home() {
-  const [hydrated, setHydrated] = useState(false); const [view, setView] = useState<View>("dashboard"); const [selectedDay, setSelectedDay] = useState(1); const [theme, setTheme] = useState<Theme>(() => { if (typeof window === "undefined") return "dark"; return (window.localStorage.getItem("english90-theme") as Theme | null) ?? "dark"; }); const [commandOpen, setCommandOpen] = useState(false); const [toast, setToast] = useState("");
+  const [hydrated, setHydrated] = useState(false); const [view, setActiveView] = useState<View>("dashboard"); const [selectedDay, setSelectedDay] = useState(1); const [theme, setTheme] = useState<Theme>(() => { if (typeof window === "undefined") return "dark"; return (window.localStorage.getItem("english90-theme") as Theme | null) ?? "dark"; }); const [commandOpen, setCommandOpen] = useState(false); const [toast, setToast] = useState("");
   const store = useEnglishStore();
   const moneyStore = useMoneyStore();
   const salesStore = useSalesStore();
+  const setView = useCallback((nextView: View) => { setActiveView(nextView); if (typeof window === "undefined") return; const nextWorkspace = workspaceForView(nextView); const url = new URL(window.location.href); const currentWorkspace = url.searchParams.get("workspace"); url.searchParams.set("workspace", nextWorkspace); window.history[currentWorkspace === nextWorkspace ? "replaceState" : "pushState"]({}, "", `${url.pathname}${url.search}${url.hash}`); }, []);
   useEffect(() => { void Promise.all([useEnglishStore.persist.rehydrate(), useMoneyStore.persist.rehydrate(), useSalesStore.persist.rehydrate()]).then(() => setHydrated(true)); }, []);
+  useEffect(() => { const restoreWorkspace = () => { const workspace = new URLSearchParams(window.location.search).get("workspace"); if (workspace === "english" || workspace === "money" || workspace === "sales") setActiveView(viewForWorkspace(workspace)); }; restoreWorkspace(); window.addEventListener("popstate", restoreWorkspace); return () => window.removeEventListener("popstate", restoreWorkspace); }, []);
   useEffect(() => { document.documentElement.dataset.theme = theme; window.localStorage.setItem("english90-theme", theme); }, [theme]);
-  useEffect(() => { const handler = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandOpen(true); } if (event.key === "Escape") setCommandOpen(false); if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return; const shortcuts: Record<string, View> = { d: "dashboard", r: "roadmap", v: "vocabulary", m: "mistakes", t: "tests", f: "finance", s: "sales" }; if (shortcuts[event.key.toLowerCase()]) setView(shortcuts[event.key.toLowerCase()]); }; window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler); }, []);
+  useEffect(() => { const handler = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandOpen(true); } if (event.key === "Escape") setCommandOpen(false); if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return; const shortcuts: Record<string, View> = { d: "dashboard", r: "roadmap", v: "vocabulary", m: "mistakes", t: "tests", f: "finance", s: "sales" }; if (shortcuts[event.key.toLowerCase()]) setView(shortcuts[event.key.toLowerCase()]); }; window.addEventListener("keydown", handler); return () => window.removeEventListener("keydown", handler); }, [setView]);
   useEffect(() => { if (!toast) return; const timeout = window.setTimeout(() => setToast(""), 2800); return () => window.clearTimeout(timeout); }, [toast]);
   const progress = useMemo(() => { const daily = store.days.length ? store.days.reduce((sum, day) => sum + day.tasks.filter((task) => task.completed).length / day.tasks.length, 0) / store.days.length * 100 : 0; const tests = average(store.tests.map((test) => average([test.grammar, test.reading, test.listening, test.writing, test.speaking, test.business]))); const speaking = average(store.speaking.map((entry) => entry.fluency * 20)); const writing = average(store.writing.map((entry) => entry.score)); const vocabulary = store.vocabulary.length ? store.vocabulary.filter((item) => item.status === "mastered" || item.status === "familiar").length / store.vocabulary.length * 100 : 0; const mistakes = store.mistakes.length ? store.mistakes.filter((item) => item.fixed).length / store.mistakes.length * 100 : 0; return Math.round(daily * 0.5 + tests * 0.2 + speaking * 0.1 + writing * 0.1 + vocabulary * 0.05 + mistakes * 0.05); }, [store.days, store.tests, store.speaking, store.writing, store.vocabulary, store.mistakes]);
   const skillProgress = useMemo(() => { const result = {} as Record<Skill, number>; (Object.keys(skillMeta) as Skill[]).forEach((skill) => { const related = store.days.flatMap((day) => day.tasks.filter((task) => task.skill === skill)); result[skill] = related.length ? Math.round(related.filter((task) => task.completed).length / related.length * 100) : 0; }); return result; }, [store.days]);
@@ -287,5 +306,5 @@ export default function Home() {
   const resetSales = () => { if (window.confirm("Очистить клиентов, звонки, pipeline и follow-up? Сначала сохрани резервную копию." ) && window.confirm("Подтвердить окончательную очистку Sales?")) { useSalesStore.getState().resetSales(); setToast("Sales очищен"); } };
   if (!hydrated) return <div className="loading-screen"><div className="brand-mark"><Sparkles size={18} /></div><strong>Personal Tracker</strong><span>Загружаем ваш локальный workspace…</span></div>;
   const renderView = () => { if (view === "dashboard") return <Dashboard days={store.days} setView={setView} setDay={setSelectedDay} progress={progress} skillProgress={skillProgress} studyMinutes={studyMinutes} streak={store.bestStreak} vocabulary={store.vocabulary} mistakes={store.mistakes} tests={store.tests} />; if (view === "roadmap") return <Roadmap days={store.days} setDay={setSelectedDay} setView={setView} />; if (view === "day") return <DayDetail day={activeDay} setView={setView} onToast={setToast} />; if (view === "vocabulary") return <Vocabulary vocabulary={store.vocabulary} onToast={setToast} />; if (view === "mistakes") return <Mistakes mistakes={store.mistakes} onToast={setToast} />; if (view === "writing") return <Writing entries={store.writing} onToast={setToast} />; if (view === "speaking") return <Speaking entries={store.speaking} onToast={setToast} />; if (view === "tests") return <Tests tests={store.tests} onToast={setToast} />; if (view === "analytics") return <Analytics days={store.days} progress={progress} skillProgress={skillProgress} studyMinutes={studyMinutes} vocabulary={store.vocabulary} mistakes={store.mistakes} tests={store.tests} />; if (view === "finance") return <MoneyTracker onToast={setToast} />; if (view === "sales") return <SalesTracker onToast={setToast} onOpenMoney={() => setView("finance")} />; if (view === "settings") return <Settings exportData={exportData} importData={importData} resetData={resetData} resetMoney={resetMoney} resetSales={resetSales} onToast={setToast} />; return null; };
-  return <><AppShell view={view} setView={setView} theme={theme} toggleTheme={() => setTheme((value) => value === "dark" ? "light" : "dark")} onCommand={() => setCommandOpen(true)}>{renderView()}</AppShell>{view !== "settings" && <button className="settings-fab" onClick={() => setView("settings")} aria-label="Настройки"><Settings2 size={18} /></button>}{commandOpen && <CommandPalette onClose={() => setCommandOpen(false)} setView={setView} setDay={setSelectedDay} />}{toast && <div className="toast"><CheckCircle2 size={17} /><span>{toast}</span><button onClick={() => setToast("")}><X size={14} /></button></div>}</>;
+  return <><InteractiveGoldField /><AppShell view={view} setView={setView} theme={theme} toggleTheme={() => setTheme((value) => value === "dark" ? "light" : "dark")} onCommand={() => setCommandOpen(true)}>{renderView()}</AppShell>{view !== "settings" && <button className="settings-fab" onClick={() => setView("settings")} aria-label="Настройки"><Settings2 size={18} /></button>}{commandOpen && <CommandPalette onClose={() => setCommandOpen(false)} setView={setView} setDay={setSelectedDay} />}{toast && <div className="toast"><CheckCircle2 size={17} /><span>{toast}</span><button onClick={() => setToast("")}><X size={14} /></button></div>}</>;
 }

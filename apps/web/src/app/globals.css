@@ -137,7 +137,7 @@ body { background: var(--background); }
 .sales-goal-strip { border-color: rgba(240, 180, 41, 0.28); background: linear-gradient(145deg, rgba(240, 180, 41, 0.1), var(--panel)); }.sales-goal-copy svg { color: #f0b429; }.sales-goal-bar span { background: linear-gradient(90deg, #be7c12, #f5ce5a); }
 .sales-tabs button.active, .money-tabs button.active { color: #ffe5a3; border: 1px solid rgba(240, 180, 41, 0.18); background: rgba(240, 180, 41, 0.12); }
 :root[data-theme="light"] .gold-field { background: radial-gradient(ellipse at 76% -8%, rgba(202, 145, 28, 0.16), transparent 42%), radial-gradient(ellipse at 10% 100%, rgba(208, 165, 72, 0.13), transparent 38%), var(--background); }
-:root[data-theme="light"] .gold-field canvas { opacity: 0.42; }
+:root[data-theme="light"] .gold-field canvas { opacity: 0.88; }
 :root[data-theme="light"] .sidebar { background: rgba(255, 251, 241, 0.88); }
 :root[data-theme="light"] .topbar { background: rgba(244, 234, 212, 0.78); }
 :root[data-theme="light"] .workspace-switcher, :root[data-theme="light"] .money-tabs, :root[data-theme="light"] .sales-tabs { background: rgba(238, 226, 200, 0.68); }

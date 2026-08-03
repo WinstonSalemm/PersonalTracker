@@ -78,10 +78,14 @@ export function InteractiveGoldField() {
         if (particle.y > height + 12) particle.y = -10;
 
         const glow = 0.34 + Math.sin(time * 0.0012 + particle.phase) * 0.18 + reach * 0.5;
+        const lightTheme = document.documentElement.dataset.theme === "light";
         context.beginPath();
         context.arc(particle.x, particle.y, particle.size + reach * 1.8, 0, Math.PI * 2);
-        context.fillStyle = `rgba(255, 210, 102, ${Math.max(0.12, glow)})`;
+        context.shadowBlur = lightTheme ? 8 + reach * 10 : 0;
+        context.shadowColor = lightTheme ? "rgba(176, 118, 15, 0.42)" : "transparent";
+        context.fillStyle = lightTheme ? `rgba(154, 103, 13, ${Math.max(0.28, glow * 0.86)})` : `rgba(255, 210, 102, ${Math.max(0.12, glow)})`;
         context.fill();
+        context.shadowBlur = 0;
       }
       if (!reducedMotion) frame = window.requestAnimationFrame(draw);
     };

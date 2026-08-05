@@ -29,10 +29,10 @@ npm run dev
 ## Основные endpoints
 
 - `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/check`
-- `POST /api/v1/sync/batch`, `GET /api/v1/sync/status`
-- `GET /api/v1/transactions`, `/transactions/summary`, `/accounts`, `/obligations`
+- `POST /api/v1/sync`, `POST /api/v1/sync/batch`, `GET /api/v1/sync/status`
+- `GET /api/v1/transactions`, `/transactions/summary`, `/accounts`, `/categories`, `/obligations`
 - `GET /api/v1/english/progress`, `/english/summary`
-- `GET /api/v1/leads`, `/calls`, `/followups`, `/sales/summary`
+- `GET /api/v1/leads`, `/calls`, `/offers`, `/followups`, `/sales/summary`
 - `GET /api/v1/dashboard/summary`
 - `GET /api/v1/assistant/snapshot`
 - `GET /api/v1/export/assistant.json`

@@ -6,11 +6,16 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "prisma migrate deploy && node dist/src/server.js",
+    "start": "node dist/src/server.js",
+    "migrate:deploy": "prisma migrate deploy",
+    "migrate:status": "prisma migrate status",
     "test": "vitest run",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts",
+    "beta:bootstrap-credits": "tsx scripts/beta-bootstrap-credits.ts",
+    "e2e:ai-credits": "node scripts/ai-credit-db-e2e.mjs",
+    "e2e:sync": "node scripts/e2e-sync-smoke.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.1",
@@ -20,13 +25,18 @@
     "@fastify/swagger": "^9.5.1",
     "@fastify/swagger-ui": "^5.2.3",
     "@prisma/client": "^6.15.0",
+    "adm-zip": "^0.5.16",
     "bcryptjs": "^3.0.2",
     "dotenv": "^16.5.0",
     "fastify": "^5.4.0",
+    "nodemailer": "^6.10.1",
+    "yaml": "^2.8.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
     "@types/node": "^22.15.0",
+    "@types/nodemailer": "^6.4.17",
     "prisma": "^6.15.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",

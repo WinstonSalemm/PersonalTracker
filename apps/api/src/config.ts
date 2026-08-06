@@ -46,6 +46,7 @@ const envSchema = z.object({
   RESET_RATE_LIMIT_MAX: z.coerce.number().int().positive().max(20).default(5),
   INVITATION_RESEND_RATE_LIMIT_MAX: z.coerce.number().int().positive().max(20).default(5),
   REQUIRE_EMAIL_VERIFICATION: z.enum(["true", "false"]).default("false"),
+  REGISTRATION_CONSENT_VERSION: z.string().trim().min(1).max(64).default("2026-08-06-v1"),
   BETA_REGISTRATION_ENABLED: z.enum(["true", "false"]).default("true"),
   BETA_INVITATIONS_ENABLED: z.enum(["true", "false"]).default("true"),
   BETA_VAULT_IMPORT_ENABLED: z.enum(["true", "false"]).default("true"),

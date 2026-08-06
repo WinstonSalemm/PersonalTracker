@@ -22,7 +22,7 @@ const render = (title: string, body: string, url: string, button: string, footer
 export class EmailTemplateRenderer {
   verification(name: string, token: string) {
     const url = actionUrl(config.EMAIL_VERIFICATION_URL, "/verify-email", token);
-    return { ...render("Confirm your email", `Hi ${name}, confirm this email address to activate Personal Tracker Beta. This link expires in ${config.EMAIL_TOKEN_TTL_MINUTES} minutes.`, url, "Confirm email", "If you did not create this account, ignore this email."), url };
+    return { ...render("Confirm your email", `Hi ${name}, confirm this email address to activate Personal Tracker Beta. This link expires in ${config.EMAIL_TOKEN_TTL_MINUTES} minutes.`, url, "Confirm email", `Fallback code: ${token}. If you did not create this account, ignore this email.`), url };
   }
   passwordReset(name: string, token: string) {
     const url = actionUrl(config.PASSWORD_RESET_URL, "/reset-password", token);

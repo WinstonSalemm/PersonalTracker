@@ -50,6 +50,7 @@ model User {
   aiCreditTransactions AICreditTransaction[]
   aiUsageRecords AIUsageRecord[]
   paymentOrders PaymentOrder[]
+  registrationConsents RegistrationConsent[]
 }
 
 enum UserStatus {
@@ -203,6 +204,16 @@ model PasswordResetToken {
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@index([userId, expiresAt])
+}
+
+model RegistrationConsent {
+  id              String   @id @default(uuid())
+  userId          String
+  documentVersion String
+  locale          String
+  acceptedAt      DateTime @default(now())
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, acceptedAt])
 }
 
 model VaultImportSession {

@@ -18,9 +18,10 @@ const personalSlug = (userId: string) => `personal-${userId.replaceAll("-", "")}
 const refreshHash = (token: string) => hashValue(`${config.JWT_REFRESH_SECRET}:${token}`);
 export const authActionToken = () => randomBytes(32).toString("base64url");
 export const authActionHash = (token: string) => hashValue(`${config.JWT_SECRET}:action:${token}`);
+type RegistrationConsentInput = { documentVersion: string; locale: string };
 
 export const createAuth = (prisma: PrismaClient) => ({
-  async register(email: string, password: string, displayName: string) {
+  async register(email: string, password: string, displayName: string, consent: RegistrationConsentInput) {
     const normalizedEmail = normalizeEmail(email);
     const existing = await prisma.user.findUnique({ where: { normalizedEmail } });
     if (existing) return { conflict: true as const };
@@ -29,6 +30,7 @@ export const createAuth = (prisma: PrismaClient) => ({
       const created = await db.user.create({ data: { email: normalizedEmail, normalizedEmail, passwordHash, displayName, status: config.REQUIRE_EMAIL_VERIFICATION === "true" ? "PENDING" : "ACTIVE" } });
       const tenant = await db.tenant.create({ data: { name: `${displayName} — personal`, slug: personalSlug(created.id), type: "PERSONAL" } });
       await db.tenantMembership.create({ data: { tenantId: tenant.id, userId: created.id, role: "OWNER", status: "ACTIVE" } });
+      await db.registrationConsent.create({ data: { userId: created.id, documentVersion: consent.documentVersion, locale: consent.locale } });
       return { user: created, tenant };
     });
     return { conflict: false as const, userId: user.user.id, tenantId: user.tenant.id, email: user.user.email, displayName: user.user.displayName };

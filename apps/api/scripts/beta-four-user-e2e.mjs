@@ -18,7 +18,7 @@ const call = async (path, { method = "GET", token, body, expected = 200 } = {}) 
 
 const register = async (name) => {
   const email = `${name}-${suffix}@beta.local`;
-  await call("/api/auth/register", { method: "POST", expected: 201, body: { displayName: name, email, password } });
+  await call("/api/auth/register", { method: "POST", expected: 201, body: { displayName: name, email, password, consent: { accepted: true, documentVersion: process.env.REGISTRATION_CONSENT_VERSION ?? "2026-08-06-v1", locale: "en-US" } } });
   return { email, ...(await call("/api/auth/login", { method: "POST", body: { email, password } })) };
 };
 const auth = (session) => session.accessToken;

@@ -8,6 +8,7 @@ export const aiCreditPricing = {
   operations: {
     capture_preview: 1,
     chat: 2,
+    english_onboarding: 2,
     progress_analysis: 3,
     weekly_summary: 4,
     monthly_analysis: 8,

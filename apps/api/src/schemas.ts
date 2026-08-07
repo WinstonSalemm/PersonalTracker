@@ -31,7 +31,7 @@ export const aiCreditFreezeSchema = z.object({ userId: z.string().uuid(), tenant
 export const aiCapturePreviewSchema = z.object({ text: z.string().trim().min(2).max(4000), type: z.enum(["workout", "expense", "income", "english", "sales", "note", "goal", "habit"]).optional() });
 export const aiCaptureCommitSchema = z.object({ previewId: z.string().uuid(), confirmationId: z.string().uuid() });
 export const aiCaptureEditSchema = z.object({ type: z.enum(["workout", "expense", "income", "english", "sales", "note", "goal", "habit"]), payload: z.record(z.string(), z.unknown()) });
-export const aiChatSchema = z.object({ message: z.string().trim().min(1).max(4000), conversationId: z.string().uuid().optional() });
+export const aiChatSchema = z.object({ message: z.string().trim().min(1).max(4000), conversationId: z.string().uuid().optional(), model: z.string().trim().max(64).optional() });
 export const englishOnboardingSchema = z.object({
   message: z.string().trim().min(1).max(4000),
   facts: z.record(z.string(), z.string().trim().max(500)).default({}),

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { config } from "./config.js";
+import { findAiModel } from "./ai-models.js";
 
 export type TenantContext = { userId: string; tenantId: string; requestId?: string };
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -119,9 +120,22 @@ export const aiToolDefinitions = [
   { name: "search_knowledge", description: "Searches Markdown documents only in the authenticated tenant.", parameters: { type: "object", properties: { query: { type: "string", maxLength: 200 } }, required: ["query"], additionalProperties: false } },
 ] as const;
 
+function responseText(response: unknown): string {
+  const value = response as {
+    output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+  };
+  return (value.output ?? [])
+      .flatMap((item) => item.content ?? [])
+      .filter((item) => item.type === "output_text" && typeof item.text === "string")
+      .map((item) => item.text!)
+      .join("\n")
+      .trim();
+}
+
 export class AiOrchestrator {
   constructor(private readonly prisma: PrismaClient) {}
-  async chat(context: TenantContext, message: string, conversationId?: string) {
+  async chat(context: TenantContext, message: string, conversationId?: string, modelId?: string) {
+    const model = findAiModel(modelId);
     const today = new Date().toISOString().slice(0, 10);
     const count = await this.prisma.betaAuditEvent.count({ where: { tenantId: context.tenantId, userId: context.userId, eventType: "ai.request", createdAt: { gte: new Date(`${today}T00:00:00.000Z`) } } });
     if (count >= config.OPENAI_DAILY_USER_BUDGET) throw new Error("ai_user_budget_exceeded");
@@ -137,9 +151,50 @@ export class AiOrchestrator {
       const memory = await this.prisma.aiMemory.create({ data: { tenantId: context.tenantId, createdByUserId: context.userId, category: "preference", content: message, status: "CANDIDATE", sourceConversationId: conversation.id } });
       memoryCandidateId = memory.id; answer += " Я создал кандидата памяти: он не будет считаться подтверждённым, пока вы его не одобрите.";
     }
+    const modelAnswer = await this.answerWithOpenAi(conversation.id, model.id);
+    if (modelAnswer) answer = modelAnswer;
     await this.prisma.aiMessage.create({ data: { conversationId: conversation.id, role: "assistant", content: answer } });
-    await this.prisma.betaAuditEvent.create({ data: { tenantId: context.tenantId, userId: context.userId, eventType: "ai.request", correlationId: context.requestId, metadata: { provider: config.OPENAI_ENABLED === "true" ? "configured-not-invoked-for-beta-safe-fallback" : "disabled" } } });
-    return { conversationId: conversation.id, answer, memoryCandidateId, provider: config.OPENAI_ENABLED === "true" ? "safe_fallback" : "disabled" };
+    await this.prisma.betaAuditEvent.create({ data: { tenantId: context.tenantId, userId: context.userId, eventType: "ai.request", correlationId: context.requestId, metadata: { provider: modelAnswer ? "openai" : "safe_fallback" } } });
+    return { conversationId: conversation.id, answer, memoryCandidateId, provider: modelAnswer ? "openai" : "safe_fallback", model: model.id, modelLabel: model.label, creditsPerChat: model.creditsPerChat };
+  }
+
+  private async answerWithOpenAi(conversationId: string, modelId: string): Promise<string | undefined> {
+    if (config.OPENAI_ENABLED !== "true" || !config.OPENAI_API_KEY) return undefined;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.OPENAI_TIMEOUT_MS);
+    try {
+      const history = await this.prisma.aiMessage.findMany({
+        where: { conversationId },
+        orderBy: { createdAt: "asc" },
+        take: 16,
+        select: { role: true, content: true },
+      });
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${config.OPENAI_API_KEY}`,
+          ...(config.OPENAI_PROJECT_ID ? { "OpenAI-Project": config.OPENAI_PROJECT_ID } : {}),
+        },
+        body: JSON.stringify({
+          model: modelId,
+          instructions: "You are a practical AI assistant in a personal tracker. Answer in Russian unless the user asks otherwise. You can help explain, plan and reflect, but never claim you completed an external action, accessed data not included in the conversation, verified a current fact, or can guarantee an outcome. Be concise and specific. User data must stay within this conversation; do not request passwords, API keys or secret information.",
+          input: history.map((turn) => ({
+            role: turn.role === "assistant" ? "assistant" : "user",
+            content: turn.content,
+          })),
+          max_output_tokens: Math.min(config.OPENAI_MAX_OUTPUT_TOKENS, 700),
+          store: false,
+        }),
+      });
+      if (!response.ok) return undefined;
+      return responseText(await response.json()).slice(0, 5000) || undefined;
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
   async approveMemory(context: TenantContext, id: string, approved: boolean) {
     const memory = await this.prisma.aiMemory.findFirst({ where: { id, tenantId: context.tenantId, createdByUserId: context.userId, status: "CANDIDATE" } });

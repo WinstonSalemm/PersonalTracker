@@ -63,9 +63,9 @@ export class AICreditService {
       return { duplicate: false, status: updated.status };
     });
   }
-  async reserve(context: CreditContext, operation: AIOperation, requestId: string, conversationId?: string): Promise<ReservedUsage> {
+  async reserve(context: CreditContext, operation: AIOperation, requestId: string, conversationId?: string, requestedCredits?: number): Promise<ReservedUsage> {
     if (config.AI_CREDITS_ENABLED !== "true") throw new Error("ai_credits_disabled");
-    const amount = aiCreditPricing.operations[operation];
+    const amount = requestedCredits ?? aiCreditPricing.operations[operation];
     return this.prisma.$transaction(async (db) => {
       const duplicate = await db.aIUsageRecord.findUnique({ where: { tenantId_requestId: { tenantId: context.tenantId, requestId } } });
       if (duplicate) return { id: duplicate.id, walletId: "", creditsReserved: duplicate.creditsReserved, status: duplicate.status };

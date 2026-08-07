@@ -155,7 +155,7 @@ export class AiOrchestrator {
     if (modelAnswer) answer = modelAnswer;
     await this.prisma.aiMessage.create({ data: { conversationId: conversation.id, role: "assistant", content: answer } });
     await this.prisma.betaAuditEvent.create({ data: { tenantId: context.tenantId, userId: context.userId, eventType: "ai.request", correlationId: context.requestId, metadata: { provider: modelAnswer ? "openai" : "safe_fallback" } } });
-    return { conversationId: conversation.id, answer, memoryCandidateId, provider: modelAnswer ? "openai" : "safe_fallback", model: model.id, modelLabel: model.label, creditsPerChat: model.creditsPerChat };
+    return { conversationId: conversation.id, answer, memoryCandidateId, provider: modelAnswer ? "openai" : "safe_fallback", model: model.id, modelLabel: model.label, creditsPerChat: modelAnswer ? model.creditsPerChat : 0 };
   }
 
   private async answerWithOpenAi(conversationId: string, modelId: string): Promise<string | undefined> {

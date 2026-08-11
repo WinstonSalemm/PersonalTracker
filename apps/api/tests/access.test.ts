@@ -15,6 +15,7 @@ describe("API access boundaries", () => {
     expect((await app.inject({ method: "GET", url: "/api/v2/capture/rollout" })).statusCode).toBe(401);
     expect((await app.inject({ method: "POST", url: "/api/v2/capture/rollout/metrics", payload: {} })).statusCode).toBe(401);
     expect((await app.inject({ method: "PUT", url: "/api/v2/admin/capture/rollout", payload: {} })).statusCode).toBe(401);
+    expect((await app.inject({ method: "GET", url: "/api/v2/admin/capture/rollout/observation?userId=11111111-1111-4111-8111-111111111111" })).statusCode).toBe(401);
     expect((await app.inject({ method: "GET", url: "/api/v1/assistant/snapshot" })).statusCode).toBe(401);
     await app.close();
   }, 20000);
@@ -53,6 +54,43 @@ describe("API access boundaries", () => {
     const reported = await app.inject({ method: "POST", url: "/api/v2/capture/rollout/metrics", headers, payload: { event: "v2_money_sync_acknowledged" } });
     expect(reported.statusCode).toBe(202);
     expect(metric).toHaveBeenCalledWith({ data: expect.objectContaining({ eventType: "capture_rollout.v2_money_sync_acknowledged" }) });
+    await app.close();
+  });
+  it("gives a beta operator only redacted rollout observation aggregates", async () => {
+    const targetUserId = "33333333-3333-4333-8333-333333333333";
+    const targetTenantId = "22222222-2222-4222-8222-222222222222";
+    const flags = vi.fn().mockResolvedValue([
+      { capability: "captureMoneyV2", enabled: true, updatedAt: new Date("2026-08-12T09:00:00.000Z") },
+    ]);
+    const groupBy = vi.fn().mockResolvedValue([
+      {
+        eventType: "capture_rollout.v2_money_sync_acknowledged",
+        _count: { _all: 1 },
+        _max: { createdAt: new Date("2026-08-12T09:03:00.000Z") },
+      },
+    ]);
+    const { buildApp } = await import("../src/app.js");
+    const app = await buildApp({
+      user: { findUnique: vi.fn().mockResolvedValue({ normalizedEmail: "owner@example.com" }) },
+      tenantMembership: { findFirst: vi.fn().mockResolvedValue({ userId: targetUserId }) },
+      captureRolloutFlag: { findMany: flags },
+      betaAuditEvent: { groupBy },
+    } as any);
+    const token = app.jwt.sign({ userId: "11111111-1111-4111-8111-111111111111", tenantId: targetTenantId, role: "user" });
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v2/admin/capture/rollout/observation?userId=${targetUserId}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      userId: targetUserId,
+      flags: { captureCoreV2Shadow: false, captureMoneyV2: true },
+      metrics: [{ event: "v2_money_sync_acknowledged", count: 1, lastAt: "2026-08-12T09:03:00.000Z" }],
+    });
+    expect(groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ userId: targetUserId, tenantId: targetTenantId }),
+    }));
     await app.close();
   });
   it("rejects an unversioned or internally inconsistent canonical Money command", async () => {

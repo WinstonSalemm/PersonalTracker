@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { config, allowedOrigins } from "./config.js";
 import { createAuth, requireSnapshotRead, requireUser, signAccessToken } from "./auth.js";
 import { buildAssistantSnapshot } from "./snapshot.js";
-import { aiCaptureCommitSchema, aiCaptureEditSchema, aiCapturePreviewSchema, aiChatSchema, aiCreditAdminSchema, aiCreditFreezeSchema, canonicalMoneyCommitSchema, captureRolloutFlagSchema, captureRolloutMetricSchema, dateQuery, emailSchema, englishOnboardingSchema, feedbackSchema, invitationAcceptSchema, invitationCreateSchema, knowledgeCreateSchema, loginSchema, refreshSchema, registerSchema, resetPasswordSchema, snapshotQuery, syncBatchSchema, tenantSwitchSchema, tokenSchema, vaultImportCommitSchema } from "./schemas.js";
+import { aiCaptureCommitSchema, aiCaptureEditSchema, aiCapturePreviewSchema, aiChatSchema, aiCreditAdminSchema, aiCreditFreezeSchema, canonicalMoneyCommitSchema, captureRolloutFlagSchema, captureRolloutMetricSchema, captureRolloutObservationQuerySchema, dateQuery, emailSchema, englishOnboardingSchema, feedbackSchema, invitationAcceptSchema, invitationCreateSchema, knowledgeCreateSchema, loginSchema, refreshSchema, registerSchema, resetPasswordSchema, snapshotQuery, syncBatchSchema, tenantSwitchSchema, tokenSchema, vaultImportCommitSchema } from "./schemas.js";
 import { hashValue, publicAuditAction } from "./security.js";
 import { moneySummary, salesSummary } from "./domain.js";
 import { AiOrchestrator, CaptureService, KnowledgeService, aiToolDefinitions } from "./beta-services.js";
@@ -148,6 +148,35 @@ export async function buildApp(prisma = new PrismaClient()) {
     });
     await audit(prisma, request, "admin.capture_rollout_flag");
     return flag;
+  });
+  app.get("/api/v2/admin/capture/rollout/observation", { preHandler: requireUser }, async (request, reply) => {
+    if (!(await isBetaOperator(request))) return reply.code(403).send({ error: "forbidden" });
+    const parsed = captureRolloutObservationQuerySchema.safeParse(request.query);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_rollout_observation_query" });
+    const target = await prisma.tenantMembership.findFirst({ where: { tenantId: request.auth!.tenantId, userId: parsed.data.userId, status: "ACTIVE" }, select: { userId: true } });
+    if (!target) return reply.code(404).send({ error: "rollout_subject_not_found" });
+    const [flagRows, metricRows] = await Promise.all([
+      (prisma as any).captureRolloutFlag.findMany({ where: { userId: parsed.data.userId }, select: { capability: true, enabled: true, updatedAt: true } }),
+      prisma.betaAuditEvent.groupBy({
+        by: ["eventType"],
+        where: { tenantId: request.auth!.tenantId, userId: parsed.data.userId, eventType: { startsWith: "capture_rollout." } },
+        _count: { _all: true },
+        _max: { createdAt: true },
+        orderBy: { eventType: "asc" },
+      }),
+    ]);
+    const flags: Record<"captureCoreV2Shadow" | "captureMoneyV2", boolean> = { captureCoreV2Shadow: false, captureMoneyV2: false };
+    for (const row of flagRows) if (row.capability in flags) flags[row.capability as keyof typeof flags] = row.enabled === true;
+    return {
+      userId: parsed.data.userId,
+      flags,
+      metrics: metricRows.map((row) => ({
+        event: row.eventType.replace(/^capture_rollout\./, ""),
+        count: row._count._all,
+        lastAt: row._max.createdAt?.toISOString() ?? null,
+      })),
+      observedAt: new Date().toISOString(),
+    };
   });
   app.post("/api/v2/capture/commits", { preHandler: requireUser }, async (request, reply) => {
     const parsed = canonicalMoneyCommitSchema.safeParse(request.body);

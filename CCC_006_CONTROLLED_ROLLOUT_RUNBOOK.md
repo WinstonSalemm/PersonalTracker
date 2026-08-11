@@ -34,10 +34,13 @@
 
 ## Observation and recovery
 
-- Observe redacted `BetaAuditEvent.eventType` values beginning with
-  `capture_rollout.`.  Expected normal sequence is review opened → committed
-  locally → sync acknowledged.  Retryable and permanent sync failure events
-  are separate.
+- Observe the operator-only
+  `GET /api/v2/admin/capture/rollout/observation?userId=<selected-user-id>`
+  response. It returns only the selected account's two rollout flags and
+  aggregate event/count/last-seen values; it never returns capture text,
+  amounts, descriptions, account/category IDs, capture IDs or correlation IDs.
+  Expected normal sequence is review opened → committed locally → sync
+  acknowledged. Retryable and permanent sync failure events are separate.
 - Ask the internal user to complete one normal sequence: obtain the flag while
   connected, create and confirm a Money record offline, reconnect, and verify
   exactly one Money transaction plus `sync acknowledged`.

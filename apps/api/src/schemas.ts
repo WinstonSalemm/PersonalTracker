@@ -66,6 +66,9 @@ export const captureRolloutFlagSchema = z.object({
   capability: z.enum(["captureCoreV2Shadow", "captureMoneyV2"]),
   enabled: z.boolean(),
 });
+export const captureRolloutObservationQuerySchema = z.object({
+  userId: z.string().uuid(),
+});
 export const captureRolloutMetricSchema = z.object({
   event: z.enum([
     "v2_money_review_opened",

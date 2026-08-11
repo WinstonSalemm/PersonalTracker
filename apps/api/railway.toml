@@ -2,7 +2,7 @@
 buildCommand = "npm ci && npx prisma generate && npm run build"
 
 [deploy]
-preDeployCommand = "npx prisma migrate deploy"
+preDeployCommand = "node scripts/railway-migrate-diagnostic.mjs"
 startCommand = "node scripts/railway-start-diagnostic.mjs"
 healthcheckPath = "/ready"
 healthcheckTimeout = 120

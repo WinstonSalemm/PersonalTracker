@@ -37,6 +37,18 @@ export const englishOnboardingSchema = z.object({
   facts: z.record(z.string(), z.string().trim().max(500)).default({}),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().trim().min(1).max(2000) })).max(16).default([]),
 });
+export const canonicalMoneyCommitSchema = z.object({
+  captureId: z.string().min(1).max(160),
+  exactMinorUnits: z.string().regex(/^(0|[1-9]\d*)$/),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  direction: z.enum(["income", "expense"]),
+  date: z.string().date(),
+  description: z.string().trim().min(1).max(2000),
+  accountId: z.string().trim().min(1).max(160),
+  categoryId: z.string().trim().min(1).max(160).nullable().optional(),
+  paymentMethod: z.string().trim().max(40).nullable().optional(),
+  intentJson: z.record(z.string(), z.unknown()),
+});
 export const knowledgeCreateSchema = z.object({ path: z.string().min(1).max(240), title: z.string().trim().min(1).max(160), documentType: z.string().trim().min(1).max(48), content: z.string().max(262144), expectedVersion: z.number().int().positive().optional() });
 export const feedbackSchema = z.object({ category: z.enum(["bug", "idea", "ux", "other"]), message: z.string().trim().min(3).max(2000), appVersion: z.string().max(64).optional(), platform: z.string().max(64).optional(), module: z.string().max(64).optional(), correlationId: z.string().max(128).optional() });
 export const syncRecord = z.record(z.string(), z.unknown());

@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { config, allowedOrigins } from "./config.js";
 import { createAuth, requireSnapshotRead, requireUser, signAccessToken } from "./auth.js";
 import { buildAssistantSnapshot } from "./snapshot.js";
-import { aiCaptureCommitSchema, aiCaptureEditSchema, aiCapturePreviewSchema, aiChatSchema, aiCreditAdminSchema, aiCreditFreezeSchema, dateQuery, emailSchema, englishOnboardingSchema, feedbackSchema, invitationAcceptSchema, invitationCreateSchema, knowledgeCreateSchema, loginSchema, refreshSchema, registerSchema, resetPasswordSchema, snapshotQuery, syncBatchSchema, tenantSwitchSchema, tokenSchema, vaultImportCommitSchema } from "./schemas.js";
+import { aiCaptureCommitSchema, aiCaptureEditSchema, aiCapturePreviewSchema, aiChatSchema, aiCreditAdminSchema, aiCreditFreezeSchema, canonicalMoneyCommitSchema, dateQuery, emailSchema, englishOnboardingSchema, feedbackSchema, invitationAcceptSchema, invitationCreateSchema, knowledgeCreateSchema, loginSchema, refreshSchema, registerSchema, resetPasswordSchema, snapshotQuery, syncBatchSchema, tenantSwitchSchema, tokenSchema, vaultImportCommitSchema } from "./schemas.js";
 import { hashValue, publicAuditAction } from "./security.js";
 import { moneySummary, salesSummary } from "./domain.js";
 import { AiOrchestrator, CaptureService, KnowledgeService, aiToolDefinitions } from "./beta-services.js";
@@ -114,6 +114,34 @@ export async function buildApp(prisma = new PrismaClient()) {
   const syncHandler = async (request: FastifyRequest, reply: any) => { const parsed = syncBatchSchema.safeParse(request.body); if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_batch" }); const result = await writeBatch(prisma, request.auth.userId, parsed.data); await audit(prisma, request, "sync.batch"); return result; };
   app.post("/api/v1/sync", { preHandler: requireUser }, syncHandler);
   app.post("/api/v1/sync/batch", { preHandler: requireUser }, syncHandler);
+  app.post("/api/v2/capture/commits", { preHandler: requireUser }, async (request, reply) => {
+    const parsed = canonicalMoneyCommitSchema.safeParse(request.body);
+    if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_canonical_commit" });
+    const input = parsed.data;
+    const accountAllowed = input.accountId === "__unassigned__" || await prisma.account.findFirst({ where: { userId: request.auth.userId, clientId: input.accountId }, select: { clientId: true } });
+    if (!accountAllowed) return reply.code(422).send({ error: "account_not_owned" });
+    if (input.categoryId && input.categoryId !== "__unclassified__") {
+      const categoryAllowed = await prisma.category.findFirst({ where: { userId: request.auth.userId, clientId: input.categoryId }, select: { clientId: true } });
+      if (!categoryAllowed) return reply.code(422).send({ error: "category_not_owned" });
+    }
+    const scale = input.currency === "UZS" ? 0 : input.currency === "USD" || input.currency === "EUR" ? 2 : -1;
+    if (scale < 0) return reply.code(400).send({ error: "unsupported_currency" });
+    const amount = Number(input.exactMinorUnits) / 10 ** scale;
+    if (!Number.isSafeInteger(Number(input.exactMinorUnits)) || !Number.isFinite(amount)) return reply.code(400).send({ error: "amount_not_representable" });
+    const result = await prisma.$transaction(async (db) => {
+      const existing = await db.canonicalMoneyCommit.findUnique({ where: { userId_captureId: { userId: request.auth!.userId, captureId: input.captureId } } });
+      if (existing) return { status: "already_committed", captureId: existing.captureId, transactionId: existing.captureId };
+      await db.transaction.upsert({
+        where: { userId_clientId: { userId: request.auth!.userId, clientId: input.captureId } },
+        create: { userId: request.auth!.userId, clientId: input.captureId, accountId: input.accountId, type: input.direction, amount, currency: input.currency, date: input.date, categoryId: input.categoryId ?? null, purpose: input.description, paymentMethod: input.paymentMethod ?? null, status: "completed", essential: true },
+        update: { accountId: input.accountId, type: input.direction, amount, currency: input.currency, date: input.date, categoryId: input.categoryId ?? null, purpose: input.description, paymentMethod: input.paymentMethod ?? null, status: "completed" },
+      });
+      await db.canonicalMoneyCommit.create({ data: { userId: request.auth!.userId, captureId: input.captureId, exactMinorUnits: input.exactMinorUnits, currency: input.currency, direction: input.direction, date: input.date, description: input.description, accountId: input.accountId, categoryId: input.categoryId ?? null, paymentMethod: input.paymentMethod ?? null, intentJson: input.intentJson as any } });
+      return { status: "committed", captureId: input.captureId, transactionId: input.captureId };
+    });
+    await audit(prisma, request, "sync.canonical_money_commit");
+    return result;
+  });
   app.get("/api/v1/sync/status", { preHandler: requireUser }, async (request) => { const latest = request.auth?.userId ? await prisma.syncEvent.findFirst({ where: { userId: request.auth.userId }, orderBy: { syncedAt: "desc" } }) : null; return { apiEnabled: config.API_ENABLED === "true", lastSuccessfulSync: latest?.syncedAt ?? null, pending: 0 }; });
   app.get("/api/v1/transactions", { preHandler: requireUser }, async (request, reply) => { const parsed = dateQuery.safeParse(request.query); if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_query" }); return prisma.transaction.findMany({ where: { userId: request.auth.userId, ...dateFilter(parsed.data.from, parsed.data.to) }, orderBy: { date: "desc" }, take: 500 }); });
   app.get("/api/v1/transactions/summary", { preHandler: requireUser }, async (request, reply) => { const parsed = dateQuery.safeParse(request.query); if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_query" }); const rows = await prisma.transaction.findMany({ where: { userId: request.auth.userId, ...dateFilter(parsed.data.from, parsed.data.to) } }); return moneySummary(rows); });

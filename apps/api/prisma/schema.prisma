@@ -51,6 +51,7 @@ model User {
   aiUsageRecords AIUsageRecord[]
   paymentOrders PaymentOrder[]
   registrationConsents RegistrationConsent[]
+  canonicalMoneyCommits CanonicalMoneyCommit[]
 }
 
 enum UserStatus {
@@ -491,6 +492,26 @@ model Transaction {
   @@unique([userId, clientId])
   @@index([userId, date])
   @@index([userId, type, status])
+}
+
+model CanonicalMoneyCommit {
+  id              String   @id @default(uuid())
+  userId          String
+  captureId       String
+  exactMinorUnits String
+  currency        String
+  direction       String
+  date            String
+  description     String
+  accountId       String
+  categoryId      String?
+  paymentMethod   String?
+  intentJson      Json
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, captureId])
+  @@index([userId, createdAt])
 }
 
 model Obligation {

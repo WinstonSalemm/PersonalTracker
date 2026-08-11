@@ -18,10 +18,17 @@ final localDataScopeProvider = Provider<LocalDataScope>((ref) {
 final legacyMigrationClaimRequestedProvider =
     StateProvider.autoDispose<bool>((ref) => false);
 
+/// Lets a new account create its own empty scope while unclaimed legacy data
+/// remains quarantined for the prior restored owner.
+final legacyMigrationEmptyScopeRequestedProvider =
+    StateProvider.autoDispose<bool>((ref) => false);
+
 final databaseProvider = FutureProvider.autoDispose<LocalDatabase>((ref) async {
   final scope = ref.watch(localDataScopeProvider);
   final manager = ref.watch(authManagerProvider);
   final claimRequested = ref.watch(legacyMigrationClaimRequestedProvider);
+  final emptyScopeRequested =
+      ref.watch(legacyMigrationEmptyScopeRequestedProvider);
   final claim = claimRequested && manager.restoredExistingSession
       ? LegacyMigrationClaim.forRestoredPersonalSession(scope)
       : null;
@@ -31,7 +38,8 @@ final databaseProvider = FutureProvider.autoDispose<LocalDatabase>((ref) async {
     // An explicit compile-time offline fixture must be able to create its own
     // empty scope while a real user's unverified legacy DB remains quarantined.
     allowEmptyScopeWithQuarantinedLegacy:
-        BetaConfig.explicitOfflineFixture && !BetaConfig.configured,
+        (BetaConfig.explicitOfflineFixture && !BetaConfig.configured) ||
+            emptyScopeRequested,
   );
   ref.onDispose(database.close);
   return database;

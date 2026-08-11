@@ -115,6 +115,31 @@ void main() {
     );
   });
 
+  test('new account can explicitly open an empty scope without claiming legacy data',
+      () async {
+    await _createLegacyFixture(root, legacyAttachments);
+    final newUser = LocalDataScope.personal('new-user');
+
+    final empty = await _open(
+      root,
+      legacyAttachments,
+      newUser,
+      allowEmptyScopeWithQuarantinedLegacy: true,
+    );
+    expect(empty.all(), isEmpty);
+    empty.close();
+
+    final owner = LocalDataScope.personal('legacy-owner');
+    final migrated = await _open(
+      root,
+      legacyAttachments,
+      owner,
+      claim: LegacyMigrationClaim.forRestoredPersonalSession(owner),
+    );
+    expect(migrated.all().single.id, 'legacy-capture');
+    migrated.close();
+  });
+
   test('bootstrap metadata contains no domain rows or raw capture content',
       () async {
     await _createLegacyFixture(root, legacyAttachments);
@@ -335,6 +360,7 @@ Future<LocalDatabase> _open(
   LocalDataScope scope, {
   LegacyMigrationClaim? claim,
   LegacyMigrationFaultPoint? faultPoint,
+  bool allowEmptyScopeWithQuarantinedLegacy = false,
 }) =>
     LocalDatabase.open(
       scope: scope,
@@ -342,6 +368,8 @@ Future<LocalDatabase> _open(
       legacyAttachmentDirectory: legacyAttachments,
       legacyMigrationClaim: claim,
       migrationFaultPoint: faultPoint,
+      allowEmptyScopeWithQuarantinedLegacy:
+          allowEmptyScopeWithQuarantinedLegacy,
     );
 
 CaptureRecord _capture(String id) => CaptureRecord(

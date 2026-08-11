@@ -1528,6 +1528,27 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
                         : 'Чтобы защитить данные, перенос доступен только после восстановления прежней сессии. База сохранена в quarantine и не удалена.',
                     style: TextStyle(color: _secondary, height: 1.45),
                   ),
+                  const SizedBox(height: 20),
+                  FilledButton.tonalIcon(
+                    onPressed: () {
+                      ref
+                          .read(
+                              legacyMigrationEmptyScopeRequestedProvider
+                                  .notifier)
+                          .state = true;
+                      ref.invalidate(databaseProvider);
+                    },
+                    icon: const Icon(Icons.add_circle_outline),
+                    label: const Text(
+                        'Продолжить с пустым пространством'),
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => unawaited(manager.logout()),
+                    icon: const Icon(Icons.logout_outlined),
+                    label: const Text(
+                        'Выйти и войти в прежний аккаунт'),
+                  ),
                   if (canClaim) ...[
                     const SizedBox(height: 20),
                     FilledButton(

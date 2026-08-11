@@ -2,7 +2,8 @@
 buildCommand = "npm ci && npx prisma generate && npm run build"
 
 [deploy]
-startCommand = "node scripts/railway-start-diagnostic.mjs"
+preDeployCommand = "npx prisma migrate deploy"
+startCommand = "npm start"
 healthcheckPath = "/ready"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"

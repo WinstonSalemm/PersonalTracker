@@ -384,6 +384,7 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
   bool _syncInFlight = false;
   bool _appActive = true;
   bool _canonicalSyncRepairAvailable = false;
+  int _moneyDataRevision = 0;
   CaptureRollout _captureRollout = const CaptureRollout.disabled();
   DateTime? _captureRolloutFetchedAt;
   static const _captureRolloutCacheTtl = Duration(seconds: 30);
@@ -851,6 +852,7 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
         _canonicalMoneyDraft = null;
         _text.clear();
         _busy = false;
+        _moneyDataRevision++;
         _notice =
             'Сохранено локально в Money. Синхронизация будет добавлена отдельно.';
       });
@@ -1309,6 +1311,10 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
       setState(() {
         _draft = null;
         _text.clear();
+        if (draft.type == CaptureType.expense ||
+            draft.type == CaptureType.income) {
+          _moneyDataRevision++;
+        }
         _chatMessages.add({
           'role': 'AI',
           'text':
@@ -1482,6 +1488,7 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
             'Доходы, расходы, счета, обязательства и бюджет',
             database,
             CaptureType.expense,
+            moneyDataRevision: _moneyDataRevision,
           ),
         'sales' => _module(
             'Продажи',
@@ -2333,14 +2340,16 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
     IconData icon,
     String description,
     LocalDatabase database,
-    CaptureType type,
-  ) =>
+    CaptureType type, {
+    int moneyDataRevision = 0,
+  }) =>
       _ModuleScreen(
         name: name,
         icon: icon,
         description: description,
         database: database,
         type: type,
+        moneyDataRevision: moneyDataRevision,
         onCapture: () => setState(() => _tab = 0),
       );
 
@@ -8004,6 +8013,7 @@ class _ModuleScreen extends StatelessWidget {
     required this.description,
     required this.database,
     required this.type,
+    required this.moneyDataRevision,
     required this.onCapture,
   });
 
@@ -8012,12 +8022,17 @@ class _ModuleScreen extends StatelessWidget {
   final String description;
   final LocalDatabase database;
   final CaptureType type;
+  final int moneyDataRevision;
   final VoidCallback onCapture;
 
   @override
   Widget build(BuildContext context) {
     if (type == CaptureType.expense) {
-      return _MoneyWorkspace(database: database, onCapture: onCapture);
+      return _MoneyWorkspace(
+        database: database,
+        revision: moneyDataRevision,
+        onCapture: onCapture,
+      );
     }
     final records = database
         .all()
@@ -8206,9 +8221,14 @@ class _ModuleScreen extends StatelessWidget {
 }
 
 class _MoneyWorkspace extends StatefulWidget {
-  const _MoneyWorkspace({required this.database, required this.onCapture});
+  const _MoneyWorkspace({
+    required this.database,
+    required this.revision,
+    required this.onCapture,
+  });
 
   final LocalDatabase database;
+  final int revision;
   final VoidCallback onCapture;
 
   @override
@@ -8229,6 +8249,15 @@ class _MoneyWorkspaceState extends State<_MoneyWorkspace> {
   void initState() {
     super.initState();
     _reload();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MoneyWorkspace oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.database != widget.database ||
+        oldWidget.revision != widget.revision) {
+      _reload();
+    }
   }
 
   void _reload() {

@@ -1,0 +1,5 @@
+# Dart and Flutter generated state is local to each package.
+**/.dart_tool/
+**/build/
+**/.flutter-plugins-dependencies
+**/.pub/

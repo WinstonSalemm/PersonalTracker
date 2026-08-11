@@ -1,0 +1,18 @@
+name: personal_tracker_capture_v2
+description: Shadow-only typed Canonical Capture V2 core.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  crypto: ^3.0.6
+  personal_tracker_domain:
+    path: ../domain-models
+  personal_tracker_command_parser:
+    path: ../command-parser
+  personal_tracker_local_storage:
+    path: ../local-storage
+dev_dependencies:
+  test: ^1.25.8

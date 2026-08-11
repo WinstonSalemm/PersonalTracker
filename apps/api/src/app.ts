@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { config, allowedOrigins } from "./config.js";
 import { createAuth, requireSnapshotRead, requireUser, signAccessToken } from "./auth.js";
 import { buildAssistantSnapshot } from "./snapshot.js";
-import { aiCaptureCommitSchema, aiCaptureEditSchema, aiCapturePreviewSchema, aiChatSchema, aiCreditAdminSchema, aiCreditFreezeSchema, canonicalMoneyCommitSchema, dateQuery, emailSchema, englishOnboardingSchema, feedbackSchema, invitationAcceptSchema, invitationCreateSchema, knowledgeCreateSchema, loginSchema, refreshSchema, registerSchema, resetPasswordSchema, snapshotQuery, syncBatchSchema, tenantSwitchSchema, tokenSchema, vaultImportCommitSchema } from "./schemas.js";
+import { aiCaptureCommitSchema, aiCaptureEditSchema, aiCapturePreviewSchema, aiChatSchema, aiCreditAdminSchema, aiCreditFreezeSchema, canonicalMoneyCommitSchema, captureRolloutFlagSchema, captureRolloutMetricSchema, dateQuery, emailSchema, englishOnboardingSchema, feedbackSchema, invitationAcceptSchema, invitationCreateSchema, knowledgeCreateSchema, loginSchema, refreshSchema, registerSchema, resetPasswordSchema, snapshotQuery, syncBatchSchema, tenantSwitchSchema, tokenSchema, vaultImportCommitSchema } from "./schemas.js";
 import { hashValue, publicAuditAction } from "./security.js";
 import { moneySummary, salesSummary } from "./domain.js";
 import { AiOrchestrator, CaptureService, KnowledgeService, aiToolDefinitions } from "./beta-services.js";
@@ -114,10 +114,46 @@ export async function buildApp(prisma = new PrismaClient()) {
   const syncHandler = async (request: FastifyRequest, reply: any) => { const parsed = syncBatchSchema.safeParse(request.body); if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_batch" }); const result = await writeBatch(prisma, request.auth.userId, parsed.data); await audit(prisma, request, "sync.batch"); return result; };
   app.post("/api/v1/sync", { preHandler: requireUser }, syncHandler);
   app.post("/api/v1/sync/batch", { preHandler: requireUser }, syncHandler);
+  app.get("/api/v2/capture/rollout", { preHandler: requireUser }, async (request) => {
+    const rows = await (prisma as any).captureRolloutFlag.findMany({
+      where: { userId: request.auth!.userId },
+      select: { capability: true, enabled: true, updatedAt: true },
+    });
+    const flags: Record<"captureCoreV2Shadow" | "captureMoneyV2", boolean> = {
+      captureCoreV2Shadow: false,
+      captureMoneyV2: false,
+    };
+    for (const row of rows) {
+      if (row.capability in flags) {
+        flags[row.capability as keyof typeof flags] = row.enabled === true;
+      }
+    }
+    return { flags, fetchedAt: new Date().toISOString() };
+  });
+  app.post("/api/v2/capture/rollout/metrics", { preHandler: requireUser }, async (request, reply) => {
+    const parsed = captureRolloutMetricSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_rollout_metric" });
+    await prisma.betaAuditEvent.create({ data: { userId: request.auth!.userId, tenantId: request.auth!.tenantId, eventType: `capture_rollout.${parsed.data.event}`, correlationId: request.id } });
+    return reply.code(202).send();
+  });
+  app.put("/api/v2/admin/capture/rollout", { preHandler: requireUser }, async (request, reply) => {
+    if (!(await isBetaOperator(request))) return reply.code(403).send({ error: "forbidden" });
+    const parsed = captureRolloutFlagSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_rollout_flag" });
+    const input = parsed.data;
+    const flag = await (prisma as any).captureRolloutFlag.upsert({
+      where: { userId_capability: { userId: input.userId, capability: input.capability } },
+      create: input,
+      update: { enabled: input.enabled },
+    });
+    await audit(prisma, request, "admin.capture_rollout_flag");
+    return flag;
+  });
   app.post("/api/v2/capture/commits", { preHandler: requireUser }, async (request, reply) => {
     const parsed = canonicalMoneyCommitSchema.safeParse(request.body);
     if (!parsed.success || !request.auth?.userId) return reply.code(400).send({ error: "invalid_canonical_commit" });
     const input = parsed.data;
+    if (input.intent.direction !== input.direction || input.intent.kind !== `money.${input.direction}` || input.intent.minorUnits !== input.exactMinorUnits || input.intent.currency !== input.currency || input.intent.account !== input.accountId || input.intent.category !== (input.categoryId ?? "__unclassified__")) return reply.code(400).send({ error: "invalid_canonical_commit" });
     const accountAllowed = input.accountId === "__unassigned__" || await prisma.account.findFirst({ where: { userId: request.auth.userId, clientId: input.accountId }, select: { clientId: true } });
     if (!accountAllowed) return reply.code(422).send({ error: "account_not_owned" });
     if (input.categoryId && input.categoryId !== "__unclassified__") {
@@ -130,14 +166,22 @@ export async function buildApp(prisma = new PrismaClient()) {
     if (!Number.isSafeInteger(Number(input.exactMinorUnits)) || !Number.isFinite(amount)) return reply.code(400).send({ error: "amount_not_representable" });
     const result = await prisma.$transaction(async (db) => {
       const existing = await db.canonicalMoneyCommit.findUnique({ where: { userId_captureId: { userId: request.auth!.userId, captureId: input.captureId } } });
-      if (existing) return { status: "already_committed", captureId: existing.captureId, transactionId: existing.captureId };
+      if (existing) {
+        const sync = await db.syncEvent.findUnique({ where: { userId_entity_clientId: { userId: request.auth!.userId, entity: "capture_v2_money", clientId: existing.captureId } } });
+        return { status: "already_committed", captureId: existing.captureId, transactionId: existing.captureId, serverRevision: sync?.id ?? null, acknowledgedAt: sync?.syncedAt.toISOString() ?? null };
+      }
       await db.transaction.upsert({
         where: { userId_clientId: { userId: request.auth!.userId, clientId: input.captureId } },
         create: { userId: request.auth!.userId, clientId: input.captureId, accountId: input.accountId, type: input.direction, amount, currency: input.currency, date: input.date, categoryId: input.categoryId ?? null, purpose: input.description, paymentMethod: input.paymentMethod ?? null, status: "completed", essential: true },
         update: { accountId: input.accountId, type: input.direction, amount, currency: input.currency, date: input.date, categoryId: input.categoryId ?? null, purpose: input.description, paymentMethod: input.paymentMethod ?? null, status: "completed" },
       });
-      await db.canonicalMoneyCommit.create({ data: { userId: request.auth!.userId, captureId: input.captureId, exactMinorUnits: input.exactMinorUnits, currency: input.currency, direction: input.direction, date: input.date, description: input.description, accountId: input.accountId, categoryId: input.categoryId ?? null, paymentMethod: input.paymentMethod ?? null, intentJson: input.intentJson as any } });
-      return { status: "committed", captureId: input.captureId, transactionId: input.captureId };
+      await db.canonicalMoneyCommit.create({ data: { userId: request.auth!.userId, captureId: input.captureId, exactMinorUnits: input.exactMinorUnits, currency: input.currency, direction: input.direction, date: input.date, description: input.description, accountId: input.accountId, categoryId: input.categoryId ?? null, paymentMethod: input.paymentMethod ?? null, intentJson: input.intent as any } });
+      const sync = await db.syncEvent.upsert({
+        where: { userId_entity_clientId: { userId: request.auth!.userId, entity: "capture_v2_money", clientId: input.captureId } },
+        create: { userId: request.auth!.userId, batchId: `capture-v2:${input.captureId}`, entity: "capture_v2_money", clientId: input.captureId, operation: "upsert", payloadHash: hashValue(JSON.stringify({ schemaVersion: input.schemaVersion, captureId: input.captureId, exactMinorUnits: input.exactMinorUnits, currency: input.currency, direction: input.direction, date: input.date, accountId: input.accountId, categoryId: input.categoryId, paymentMethod: input.paymentMethod, intent: input.intent })) },
+        update: { syncedAt: new Date() },
+      });
+      return { status: "committed", captureId: input.captureId, transactionId: input.captureId, serverRevision: sync.id, acknowledgedAt: sync.syncedAt.toISOString() };
     });
     await audit(prisma, request, "sync.canonical_money_commit");
     return result;

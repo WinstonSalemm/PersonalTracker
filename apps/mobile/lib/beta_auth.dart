@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -12,6 +13,12 @@ class BetaConfig {
   static const environment = String.fromEnvironment(
     'PT_ENVIRONMENT',
     defaultValue: 'local',
+  );
+  // Offline fixture mode is opt-in at build time.  An unconfigured normal
+  // build must never invent a synthetic owner for local domain storage.
+  static const explicitOfflineFixture = bool.fromEnvironment(
+    'PT_EXPLICIT_OFFLINE_FIXTURE',
+    defaultValue: false,
   );
   static bool get configured => apiBaseUrl.trim().isNotEmpty;
   static const registrationConsentVersion = '2026-08-06-v1';
@@ -27,7 +34,9 @@ class ApiFailure implements Exception {
   String get userMessage => switch (code) {
         'unauthorized' ||
         'invalid_credentials' =>
-          'Не удалось подтвердить вход.',
+          'Неверный email или пароль. Проверьте данные или зарегистрируйтесь.',
+        'server_unavailable' =>
+          'Сервер временно недоступен. Попробуйте через час.',
         'tenant_access_denied' ||
         'forbidden' =>
           'Нет доступа к этому пространству.',
@@ -39,8 +48,7 @@ class ApiFailure implements Exception {
         'api_not_configured' => 'Для beta не настроен адрес API.',
         'email_already_registered' =>
           'Этот email уже зарегистрирован. Войдите или восстановите пароль.',
-        'registration_disabled' =>
-          'Регистрация временно отключена на сервере.',
+        'registration_disabled' => 'Регистрация временно отключена на сервере.',
         'invalid_request' =>
           'Проверьте имя, email и пароль. Пароль должен содержать минимум 12 символов, буквы и цифры.',
         'api_disabled' => 'Production API временно отключён.',
@@ -51,7 +59,7 @@ class ApiFailure implements Exception {
         'consent_version_invalid' =>
           'Версия документов регистрации устарела. Обновите приложение.',
         'consent_required' =>
-          'Для регистрации нужно принять оферту и предупреждение об AI.',
+          'Для регистрации нужно принять оферту и условия умных функций.',
         _ => 'Не удалось выполнить действие. Попробуйте ещё раз.',
       };
 }
@@ -82,7 +90,18 @@ class SecureTokenStorage implements TokenStorage {
 
   @override
   Future<BetaTokens?> read() async {
-    final values = await _storage.readAll();
+    Map<String, String> values;
+    try {
+      values = await _storage.readAll();
+    } catch (_) {
+      // Android Keystore data can become unreadable after reinstalling,
+      // restoring a backup, or changing the device security state. Treat it
+      // as an expired local session instead of leaving the app on the loader.
+      try {
+        await _storage.deleteAll();
+      } catch (_) {}
+      return null;
+    }
     final access = values[_accessKey];
     final refresh = values[_refreshKey];
     final tenant = values[_tenantKey];
@@ -201,9 +220,12 @@ class AuthApiClient {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         final error =
             decoded is Map<String, dynamic> ? decoded : <String, dynamic>{};
+        final statusCode = response.statusCode;
         throw ApiFailure(
-          (error['error'] as String?) ?? 'request_failed',
-          statusCode: response.statusCode,
+          statusCode >= 500
+              ? 'server_unavailable'
+              : (error['error'] as String?) ?? 'request_failed',
+          statusCode: statusCode,
           requestId: (error['requestId'] as String?) ??
               response.headers['x-request-id'],
         );
@@ -311,21 +333,44 @@ class SessionManager extends ChangeNotifier {
   final TokenStorage _storage;
   BetaSession? session;
   bool restoring = true;
+  bool restoredExistingSession = false;
   ApiFailure? lastFailure;
   Future<BetaTokens?>? _refreshFlight;
 
   Future<void> restore() async {
     if (!restoring) return;
-    final tokens = await _storage.read();
-    if (tokens == null) return _finishRestore();
     try {
-      await _establish(tokens, allowRefresh: true);
-    } on ApiFailure {
-      await _storage.clear();
+      final tokens = await _storage.read();
+      if (tokens != null) {
+        try {
+          await _establish(tokens, allowRefresh: true);
+          restoredExistingSession = session != null;
+          notifyListeners();
+        } on ApiFailure {
+          await _storage.clear();
+          session = null;
+          restoredExistingSession = false;
+        }
+      }
+    } catch (_) {
+      // Never leave BetaSessionGate in its permanent restoring state when
+      // platform storage or a legacy token fails unexpectedly.
       session = null;
+      restoredExistingSession = false;
     } finally {
       _finishRestore();
     }
+  }
+
+  /// Explicit local test identity only. This makes the opt-in fixture a real
+  /// session for scoped-storage resolution; normal unconfigured builds still
+  /// fail closed and production authentication is unaffected.
+  void enableExplicitOfflineFixture() {
+    if (!BetaConfig.explicitOfflineFixture || BetaConfig.configured) return;
+    session = const _OfflineSession();
+    restoring = false;
+    restoredExistingSession = false;
+    notifyListeners();
   }
 
   void _finishRestore() {
@@ -335,6 +380,7 @@ class SessionManager extends ChangeNotifier {
 
   Future<void> login(String email, String password) async {
     lastFailure = null;
+    restoredExistingSession = false;
     try {
       await _establish(await _api.login(email.trim(), password),
           allowRefresh: false);
@@ -347,6 +393,7 @@ class SessionManager extends ChangeNotifier {
   Future<void> register(
       String displayName, String email, String password) async {
     lastFailure = null;
+    restoredExistingSession = false;
     try {
       await _establish(
           await _api.register(displayName.trim(), email.trim(), password),
@@ -413,6 +460,7 @@ class SessionManager extends ChangeNotifier {
       } catch (_) {
         await _storage.clear();
         session = null;
+        restoredExistingSession = false;
         notifyListeners();
         return null;
       }
@@ -521,6 +569,7 @@ class SessionManager extends ChangeNotifier {
     } finally {
       await _storage.clear();
       session = null;
+      restoredExistingSession = false;
       notifyListeners();
     }
   }
@@ -544,7 +593,11 @@ class _BetaSessionGateState extends State<BetaSessionGate> {
   void initState() {
     super.initState();
     widget.manager.addListener(_changed);
-    unawaited(widget.manager.restore());
+    if (BetaConfig.explicitOfflineFixture && !BetaConfig.configured) {
+      widget.manager.enableExplicitOfflineFixture();
+    } else {
+      unawaited(widget.manager.restore());
+    }
   }
 
   @override
@@ -557,6 +610,9 @@ class _BetaSessionGateState extends State<BetaSessionGate> {
 
   @override
   Widget build(BuildContext context) {
+    if (!BetaConfig.configured && !BetaConfig.explicitOfflineFixture) {
+      return const _IdentityRequiredScreen();
+    }
     if (!BetaConfig.configured)
       return widget.builder(context, const _OfflineSession());
     if (widget.manager.restoring) {
@@ -567,6 +623,23 @@ class _BetaSessionGateState extends State<BetaSessionGate> {
         ? LoginScreen(manager: widget.manager)
         : widget.builder(context, session);
   }
+}
+
+class _IdentityRequiredScreen extends StatelessWidget {
+  const _IdentityRequiredScreen();
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+        body: Center(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Войдите в аккаунт, чтобы открыть локальные данные.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      );
 }
 
 class _OfflineSession extends BetaSession {
@@ -613,7 +686,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> submit() async {
     if (register && !consentAccepted) {
       setState(() => message =
-          'Для регистрации нужно принять оферту и предупреждение об AI.');
+          'Для регистрации нужно принять оферту и условия умных функций.');
       return;
     }
     setState(() {
@@ -679,91 +752,464 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 440),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                        register
-                            ? 'Создать личное пространство'
-                            : 'Войти в Personal Tracker',
-                        style: Theme.of(context).textTheme.headlineSmall),
-                    const SizedBox(height: 20),
-                    if (register)
-                      TextField(
-                          controller: name,
-                          decoration: const InputDecoration(labelText: 'Имя')),
-                    if (register) const SizedBox(height: 12),
-                    if (register)
-                      CheckboxListTile(
-                        value: consentAccepted,
-                        onChanged: busy
-                            ? null
-                            : (value) => setState(
-                                () => consentAccepted = value ?? false),
-                        contentPadding: EdgeInsets.zero,
-                        controlAffinity: ListTileControlAffinity.leading,
-                        title: const Text(
-                            'Принимаю оферту и понимаю, что советы AI могут быть ошибочными, не являются медицинской рекомендацией и не заменяют специалиста.'),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final dark = theme.brightness == Brightness.dark;
+    final border = theme.colorScheme.outline.withAlpha(dark ? 80 : 55);
+    final card = dark ? const Color(0xD9080808) : const Color(0xEFFFFFFF);
+    final muted = theme.colorScheme.onSurface.withAlpha(150);
+    InputDecoration field(String label, IconData icon, {String? hint}) =>
+        InputDecoration(
+          labelText: label,
+          hintText: hint,
+          prefixIcon: Icon(icon, size: 19),
+          filled: true,
+          fillColor:
+              dark ? const Color(0xB9080808) : Colors.white.withAlpha(220),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: BorderSide(color: border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide:
+                BorderSide(color: theme.colorScheme.primary, width: 1.6),
+          ),
+        );
+
+    return Scaffold(
+      body: _AuthMeshBackground(
+        child: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) => SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 22),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: max(0, constraints.maxHeight - 44),
+                    maxWidth: 470,
+                  ),
+                  child: Center(
+                    child: Material(
+                      color: card,
+                      elevation: dark ? 18 : 5,
+                      shadowColor: theme.colorScheme.primary.withAlpha(35),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(28),
+                        side: BorderSide(color: border),
                       ),
-                    if (register) const SizedBox(height: 4),
-                    TextField(
-                        controller: email,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(labelText: 'Email')),
-                    const SizedBox(height: 12),
-                    TextField(
-                        controller: password,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                            labelText:
-                                'Пароль (минимум 12 символов, буква и цифра)')),
-                    if (message != null)
-                      Padding(
-                          padding: const EdgeInsets.only(top: 12),
-                          child: Text(message!,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(13),
+                                  child: Image.asset(
+                                    dark
+                                        ? 'assets/brand/codev-tim-logo.png'
+                                        : 'assets/brand/codev-tim-logo-light.png',
+                                    width: 48,
+                                    height: 48,
+                                    fit: BoxFit.cover,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text('CODEV-TIM',
+                                          style: TextStyle(
+                                              color: theme.colorScheme.primary,
+                                              fontFamily: 'Cascadia Mono',
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w800,
+                                              letterSpacing: 1.4)),
+                                      const SizedBox(height: 3),
+                                      Text('личное пространство',
+                                          style: TextStyle(
+                                              color: muted, fontSize: 12)),
+                                    ],
+                                  ),
+                                ),
+                                if (BetaConfig.environment != 'production')
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 9, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: theme.colorScheme.primary
+                                          .withAlpha(22),
+                                      borderRadius: BorderRadius.circular(99),
+                                      border: Border.all(
+                                          color: theme.colorScheme.primary
+                                              .withAlpha(70)),
+                                    ),
+                                    child: Text(
+                                      BetaConfig.environment.toUpperCase(),
+                                      style: TextStyle(
+                                          color: theme.colorScheme.primary,
+                                          fontFamily: 'Cascadia Mono',
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w700),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 26),
+                            Text(
+                              register
+                                  ? 'Создайте свой ритм'
+                                  : 'С возвращением',
+                              style: theme.textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.6,
+                              ),
+                            ),
+                            const SizedBox(height: 7),
+                            Text(
+                              register
+                                  ? 'Выберите нужные разделы, а первую полезную запись сделаем вместе.'
+                                  : 'Ваши записи, деньги и прогресс уже ждут вас.',
+                              style: TextStyle(color: muted, height: 1.4),
+                            ),
+                            const SizedBox(height: 12),
+                            Wrap(
+                              spacing: 7,
+                              runSpacing: 7,
+                              children: const [
+                                _AuthValueChip(
+                                    icon: Icons.check_circle_outline_rounded,
+                                    label: 'Записи с подтверждением'),
+                                _AuthValueChip(
+                                    icon: Icons.dashboard_customize_outlined,
+                                    label: 'Только нужные разделы'),
+                                _AuthValueChip(
+                                    icon: Icons.edit_note_rounded,
+                                    label: 'AI не обязателен'),
+                              ],
+                            ),
+                            const SizedBox(height: 20),
+                            Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: dark
+                                    ? Colors.white.withAlpha(10)
+                                    : Colors.black.withAlpha(8),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                      child: _AuthModeButton(
+                                    label: 'Войти',
+                                    selected: !register,
+                                    onTap: busy
+                                        ? null
+                                        : () =>
+                                            setState(() => register = false),
+                                  )),
+                                  Expanded(
+                                      child: _AuthModeButton(
+                                    label: 'Создать',
+                                    selected: register,
+                                    onTap: busy
+                                        ? null
+                                        : () => setState(() => register = true),
+                                  )),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 18),
+                            if (register) ...[
+                              TextField(
+                                  controller: name,
+                                  textCapitalization: TextCapitalization.words,
+                                  decoration: field(
+                                      'Имя', Icons.person_outline_rounded)),
+                              const SizedBox(height: 12),
+                            ],
+                            TextField(
+                                controller: email,
+                                keyboardType: TextInputType.emailAddress,
+                                decoration: field(
+                                    'Email', Icons.alternate_email_rounded)),
+                            const SizedBox(height: 12),
+                            TextField(
+                                controller: password,
+                                obscureText: true,
+                                decoration: field(
+                                    'Пароль', Icons.lock_outline_rounded,
+                                    hint: register
+                                        ? 'Минимум 12 символов, буква и цифра'
+                                        : null)),
+                            if (register) ...[
+                              const SizedBox(height: 8),
+                              CheckboxListTile(
+                                value: consentAccepted,
+                                onChanged: busy
+                                    ? null
+                                    : (value) => setState(
+                                        () => consentAccepted = value ?? false),
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                title: Text(
+                                    'Принимаю оферту и условия умных функций.',
+                                    style: TextStyle(
+                                        color: muted,
+                                        fontSize: 12,
+                                        height: 1.35)),
+                              ),
+                            ],
+                            if (message != null)
+                              Container(
+                                margin: const EdgeInsets.only(top: 10),
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.error.withAlpha(16),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                      color: theme.colorScheme.error
+                                          .withAlpha(55)),
+                                ),
+                                child: Text(message!,
+                                    style: TextStyle(
+                                        color: theme.colorScheme.error,
+                                        height: 1.3)),
+                              ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              height: 52,
+                              child: FilledButton(
+                                onPressed: busy ? null : submit,
+                                style: FilledButton.styleFrom(
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(14))),
+                                child: busy
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2))
+                                    : Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                            Icon(
+                                                register
+                                                    ? Icons.auto_awesome_rounded
+                                                    : Icons
+                                                        .arrow_forward_rounded,
+                                                size: 19),
+                                            const SizedBox(width: 8),
+                                            Text(register
+                                                ? 'Создать пространство'
+                                                : 'Войти в приложение'),
+                                          ]),
+                              ),
+                            ),
+                            if (!register) ...[
+                              const SizedBox(height: 4),
+                              TextButton(
+                                  onPressed: busy ? null : forgotPassword,
+                                  child: const Text('Не помню пароль')),
+                              TextButton(
+                                  onPressed: busy
+                                      ? null
+                                      : () => showDialog<void>(
+                                          context: context,
+                                          builder: (_) => _ManualResetDialog(
+                                              manager: widget.manager)),
+                                  child: const Text('Ввести код из письма')),
+                            ],
+                            const SizedBox(height: 7),
+                            Text(
+                              register
+                                  ? 'После регистрации подтвердите email. Если ссылка не открылась, используйте код из письма.'
+                                  : 'Ваши данные защищены. Сессия хранится в защищённом хранилище устройства.',
+                              textAlign: TextAlign.center,
                               style: TextStyle(
-                                  color: Theme.of(context).colorScheme.error))),
-                    const SizedBox(height: 18),
-                    FilledButton(
-                        onPressed: busy ? null : submit,
-                        child: busy
-                            ? const CircularProgressIndicator()
-                            : Text(register ? 'Зарегистрироваться' : 'Войти')),
-                    TextButton(
-                        onPressed: busy
-                            ? null
-                            : () => setState(() => register = !register),
-                        child: Text(register
-                            ? 'Уже есть аккаунт? Войти'
-                            : 'Нет аккаунта? Создать')),
-                    if (!register)
-                      TextButton(
-                          onPressed: busy ? null : forgotPassword,
-                          child: const Text('Не помню пароль')),
-                    if (!register)
-                      TextButton(
-                          onPressed: busy
-                              ? null
-                              : () => showDialog<void>(
-                                  context: context,
-                                  builder: (_) => _ManualResetDialog(
-                                      manager: widget.manager)),
-                          child: const Text('Ввести код из письма')),
-                    const Text(
-                        'После регистрации подтвердите email. Если ссылка не открылась, используйте код из письма вручную.',
-                        textAlign: TextAlign.center),
-                  ]),
+                                  color: muted, fontSize: 11, height: 1.4),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AuthModeButton extends StatelessWidget {
+  const _AuthModeButton(
+      {required this.label, required this.selected, this.onTap});
+
+  final String label;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        height: 40,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: selected ? scheme.primary.withAlpha(28) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          border:
+              selected ? Border.all(color: scheme.primary.withAlpha(75)) : null,
+        ),
+        child: Text(label,
+            style: TextStyle(
+                color:
+                    selected ? scheme.primary : scheme.onSurface.withAlpha(150),
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600)),
+      ),
+    );
+  }
+}
+
+class _AuthValueChip extends StatelessWidget {
+  const _AuthValueChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: scheme.primary.withAlpha(12),
+        borderRadius: BorderRadius.circular(99),
+        border: Border.all(color: scheme.primary.withAlpha(45)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: scheme.primary),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                  color: scheme.onSurface.withAlpha(185),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+}
+
+class _AuthMeshBackground extends StatefulWidget {
+  const _AuthMeshBackground({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_AuthMeshBackground> createState() => _AuthMeshBackgroundState();
+}
+
+class _AuthMeshBackgroundState extends State<_AuthMeshBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 24),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+        animation: _controller,
+        builder: (context, child) => CustomPaint(
+          painter: _AuthMeshPainter(
+            progress: _controller.value,
+            color: Theme.of(context).colorScheme.primary,
+            light: Theme.of(context).brightness == Brightness.light,
+          ),
+          child: child,
+        ),
+        child: widget.child,
       );
+}
+
+class _AuthMeshPainter extends CustomPainter {
+  _AuthMeshPainter({
+    required this.progress,
+    required this.color,
+    required this.light,
+  });
+
+  final double progress;
+  final Color color;
+  final bool light;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final points = <Offset>[];
+    for (var i = 0; i < 26; i++) {
+      final seed = i * 1.6180339887;
+      final x = (0.08 + (sin(seed * 2.1 + progress * pi * 2) + 1) * 0.42) *
+          size.width;
+      final y = (0.08 + (cos(seed * 1.7 + progress * pi * 2.4) + 1) * 0.42) *
+          size.height;
+      points.add(Offset(x, y));
+    }
+    final line = Paint()
+      ..color = color.withAlpha(light ? 18 : 24)
+      ..strokeWidth = 1;
+    for (var i = 0; i < points.length; i++) {
+      for (var j = i + 1; j < points.length; j++) {
+        if ((points[i] - points[j]).distance < size.shortestSide * 0.26) {
+          canvas.drawLine(points[i], points[j], line);
+        }
+      }
+    }
+    final dot = Paint()..color = color.withAlpha(light ? 32 : 42);
+    for (final point in points) {
+      canvas.drawCircle(point, 2.2, dot);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _AuthMeshPainter oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.color != color ||
+      oldDelegate.light != light;
 }
 
 class _EmailVerificationDialog extends StatefulWidget {

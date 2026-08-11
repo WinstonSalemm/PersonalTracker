@@ -52,6 +52,20 @@ model User {
   paymentOrders PaymentOrder[]
   registrationConsents RegistrationConsent[]
   canonicalMoneyCommits CanonicalMoneyCommit[]
+  captureRolloutFlags CaptureRolloutFlag[]
+}
+
+model CaptureRolloutFlag {
+  id         String   @id @default(uuid())
+  userId     String
+  capability String
+  enabled    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, capability])
+  @@index([userId])
 }
 
 enum UserStatus {

@@ -124,7 +124,7 @@ void main() {
     }
   });
 
-  test('V1-unsupported raw submission still persists one V2 income shadow',
+  test('salary income persists one V2 shadow without a domain side effect',
       () async {
     final root = await Directory.systemTemp.createTemp('capture-v2-v1-gap-');
     try {
@@ -135,7 +135,7 @@ void main() {
       final result = await CaptureV2ShadowRunner(
               adapter: adapter, database: db, enabled: true)
           .run('Получил зарплату 5 миллионов', now: now);
-      expect(result!.envelope!.v1Draft, isNull);
+      expect(result!.envelope!.v1Draft?.type, CaptureType.income);
       expect(result.envelope!.intent.kind, 'money.income');
       expect((result.envelope!.intent as MoneyIntentV2).minorUnits, '5000000');
       expect(db.captureShadowV2Count(), 1);
@@ -149,6 +149,13 @@ void main() {
         } on FileSystemException {}
       }
     }
+  });
+
+  test('V2 parses Russian salary shorthand as a money income', () async {
+    final result = await adapter.parse('зп 5000000 пришла', now: now);
+    expect(result.isUnsupported, isFalse);
+    expect(result.intent.kind, 'money.income');
+    expect((result.intent as MoneyIntentV2).minorUnits, '5000000');
   });
 
   test(

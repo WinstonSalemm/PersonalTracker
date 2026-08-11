@@ -867,7 +867,7 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
 
   CaptureEnvelopeV2 _applyMoneySuggestions(CaptureEnvelopeV2 envelope) {
     final lower = envelope.originalText.toLowerCase();
-    final salary = RegExp(r'зарплат|salary|maosh|ойлик').hasMatch(lower);
+    final salary = RegExp(r'зарплат|зп|salary|maosh|ойлик').hasMatch(lower);
     final card = salary || RegExp(r'карт|карта|card|bank card').hasMatch(lower);
     return envelope.withMoneyEdits(
       account: card ? 'card-main' : null,
@@ -890,7 +890,7 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
                 : MoneyCategoryKind.expense))
         .toList();
     final salaryHint =
-        RegExp(r'зарплат|salary|maosh|ойлик', caseSensitive: false)
+        RegExp(r'зарплат|зп|salary|maosh|ойлик', caseSensitive: false)
             .hasMatch(envelope.originalText);
     final cardHint = salaryHint ||
         RegExp(r'карт|карта|card|bank card', caseSensitive: false)
@@ -3739,7 +3739,7 @@ class _CanonicalMoneyReviewCard extends StatelessWidget {
     final intent = envelope.intent as MoneyIntentV2;
     final income = intent.direction.name == 'income';
     final lower = envelope.originalText.toLowerCase();
-    final salaryHint = RegExp(r'зарплат|salary|maosh|ойлик').hasMatch(lower);
+    final salaryHint = RegExp(r'зарплат|зп|salary|maosh|ойлик').hasMatch(lower);
     final cardHint =
         salaryHint || RegExp(r'карт|карта|card|bank card').hasMatch(lower);
     final when = envelope.occurredAt ?? envelope.createdAt;
@@ -4010,6 +4010,7 @@ class _SportPlanProposalCard extends StatelessWidget {
 
 String? _captureValueRussian(String? value) => switch (value) {
       'other' => 'Другое',
+      'salary' => 'Предположение: Зарплата',
       'cash' => 'Наличные',
       'card' => 'Карта',
       _ => value,

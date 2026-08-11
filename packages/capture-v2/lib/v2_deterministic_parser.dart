@@ -35,7 +35,7 @@ class V2DeterministicShadowParser {
                 .hasMatch(lower) &&
             !lower.contains('got paid');
     final income =
-        RegExp(r'получил|пришло|перевели|зарплат|заработал|maosh|tushdi|kelib tushdi|oldim|\breceived\b|\bgot paid\b|\bsalary\b|\bearned\b')
+        RegExp(r'получил|получила|пришло|пришла|перевели|зарплат|зп|заработал|заработала|maosh|tushdi|kelib tushdi|oldim|\breceived\b|\bgot paid\b|\bsalary\b|\bearned\b')
                 .hasMatch(lower) &&
             !lower.contains('sotib oldim');
     if (!expense && !income) return null;

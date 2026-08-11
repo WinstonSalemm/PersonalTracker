@@ -14,6 +14,32 @@ class DeterministicParser implements CommandParser {
     final lower = value.toLowerCase();
     final date = DateTime.now().toIso8601String().substring(0, 10);
 
+    final salary = _containsAny(lower, ['зарплат', 'зп']);
+    if (salary ||
+        _containsAny(lower, [
+          'получил',
+          'получила',
+          'пришло',
+          'пришла',
+          'перевели',
+          'заработал',
+          'заработала',
+        ])) {
+      final amount = _amount(lower);
+      if (amount == null) return null;
+      return CaptureDraft(
+        type: CaptureType.income,
+        originalText: value,
+        date: date,
+        amount: amount,
+        // These are visible suggestions; saving remains an explicit user step.
+        category: salary ? 'salary' : 'other',
+        paymentMethod: salary ? 'card' : 'other',
+        description: value,
+        currency: _currency(lower),
+      );
+    }
+
     if (_containsAny(lower, [
       'купил',
       'купила',

@@ -431,6 +431,18 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
       final intent = Map<String, dynamic>.from(
           (intentEnvelope['intent'] as Map).cast<String, dynamic>());
       try {
+        // Older shadow drafts used the short labels below. The canonical API
+        // reserves the double-underscore forms for intentionally unresolved
+        // account/category references, so normalize them before validating
+        // and sending a deferred outbox row.
+        final accountId = row['account_id'] == 'unassigned'
+            ? LocalDatabase.unassignedAccountId
+            : row['account_id'];
+        final categoryId = row['category_id'] == 'unclassified'
+            ? LocalDatabase.unclassifiedCategoryId
+            : row['category_id'];
+        intent['account'] = accountId;
+        intent['category'] = categoryId;
         final payload = <String, dynamic>{
           'captureId': captureId,
           'exactMinorUnits': row['exact_minor_units'],
@@ -438,8 +450,8 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
           'direction': row['type'],
           'date': row['date'],
           'description': row['purpose'],
-          'accountId': row['account_id'],
-          'categoryId': row['category_id'],
+          'accountId': accountId,
+          'categoryId': categoryId,
           'paymentMethod': row['payment_method'],
           'schemaVersion': 2,
           'intent': intent,

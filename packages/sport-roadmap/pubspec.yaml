@@ -1,0 +1,6 @@
+name: personal_tracker_sport_roadmap
+description: Local-first 90-day sport roadmap and load-advisor contract.
+publish_to: none
+version: 0.1.0
+environment:
+  sdk: '>=3.3.0 <4.0.0'

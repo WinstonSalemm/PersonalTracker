@@ -1,0 +1,6 @@
+name: personal_tracker_english_roadmap
+description: Deterministic English A2 to B2 roadmap with a future AI advisor seam.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.3.0 <4.0.0'

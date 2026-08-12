@@ -1,0 +1,10 @@
+name: personal_tracker_api_client
+description: REST client and sync payload mapping for Personal Tracker.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+dependencies:
+  http: ^1.2.2
+  personal_tracker_domain:
+    path: ../domain-models

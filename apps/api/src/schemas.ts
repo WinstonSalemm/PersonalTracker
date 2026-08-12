@@ -37,7 +37,19 @@ export const englishOnboardingSchema = z.object({
   facts: z.record(z.string(), z.string().trim().max(500)).default({}),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().trim().min(1).max(2000) })).max(16).default([]),
 });
+const canonicalMoneyIntentSchema = z.object({
+  kind: z.enum(["money.expense", "money.income"]),
+  direction: z.enum(["income", "expense"]),
+  minorUnits: z.string().regex(/^(0|[1-9]\d*)$/),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  account: z.string().trim().min(1).max(160),
+  category: z.string().trim().min(1).max(160),
+  description: z.string().trim().min(1).max(2000).nullable(),
+  paymentMethod: z.string().trim().max(40).nullable(),
+  counterparty: z.string().trim().max(240).nullable(),
+}).strict();
 export const canonicalMoneyCommitSchema = z.object({
+  schemaVersion: z.literal(2),
   captureId: z.string().min(1).max(160),
   exactMinorUnits: z.string().regex(/^(0|[1-9]\d*)$/),
   currency: z.string().regex(/^[A-Z]{3}$/),
@@ -47,7 +59,27 @@ export const canonicalMoneyCommitSchema = z.object({
   accountId: z.string().trim().min(1).max(160),
   categoryId: z.string().trim().min(1).max(160).nullable().optional(),
   paymentMethod: z.string().trim().max(40).nullable().optional(),
-  intentJson: z.record(z.string(), z.unknown()),
+  intent: canonicalMoneyIntentSchema,
+});
+export const captureRolloutFlagSchema = z.object({
+  userId: z.string().uuid(),
+  capability: z.enum(["captureCoreV2Shadow", "captureMoneyV2"]),
+  enabled: z.boolean(),
+});
+export const captureRolloutObservationQuerySchema = z.object({
+  userId: z.string().uuid(),
+});
+export const captureRolloutMetricSchema = z.object({
+  event: z.enum([
+    "v2_money_review_opened",
+    "v2_money_review_edited",
+    "v2_money_review_cancelled",
+    "v2_money_committed_local",
+    "v2_money_sync_acknowledged",
+    "v2_money_sync_retryable_failure",
+    "v2_money_sync_permanent_failure",
+    "v2_money_fallback_to_v1",
+  ]),
 });
 export const knowledgeCreateSchema = z.object({ path: z.string().min(1).max(240), title: z.string().trim().min(1).max(160), documentType: z.string().trim().min(1).max(48), content: z.string().max(262144), expectedVersion: z.number().int().positive().optional() });
 export const feedbackSchema = z.object({ category: z.enum(["bug", "idea", "ux", "other"]), message: z.string().trim().min(3).max(2000), appVersion: z.string().max(64).optional(), platform: z.string().max(64).optional(), module: z.string().max(64).optional(), correlationId: z.string().max(128).optional() });

@@ -1,0 +1,11 @@
+name: personal_tracker_command_parser
+description: Offline deterministic and future server AI command parsers.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+dependencies:
+  personal_tracker_domain:
+    path: ../domain-models
+dev_dependencies:
+  test: ^1.25.8

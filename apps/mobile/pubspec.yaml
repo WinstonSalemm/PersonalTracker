@@ -1,0 +1,44 @@
+name: personal_tracker_assistant
+description: Offline-first Personal Tracker Assistant.
+publish_to: none
+version: 0.1.0+1
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.22.0'
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.5.1
+  speech_to_text: ^7.0.0
+  file_picker: ^11.0.3
+  personal_tracker_domain:
+    path: ../../packages/domain-models
+  personal_tracker_command_parser:
+    path: ../../packages/command-parser
+  personal_tracker_local_storage:
+    path: ../../packages/local-storage
+  personal_tracker_capture_v2:
+    path: ../../packages/capture-v2
+  personal_tracker_api_client:
+    path: ../../packages/api-client
+  personal_tracker_english_roadmap:
+    path: ../../packages/english-roadmap
+  personal_tracker_sport_roadmap:
+    path: ../../packages/sport-roadmap
+  url_launcher: ^6.3.2
+  http: ^1.2.2
+  record: ^7.1.1
+  path_provider: ^2.1.6
+  audioplayers: ^6.8.1
+  path: ^1.9.1
+  flutter_secure_storage: ^9.2.4
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  sqlite3: ^2.4.6
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/brand/codev-tim-logo.png
+    - assets/brand/codev-tim-logo-light.png

@@ -431,7 +431,7 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
       final intent = Map<String, dynamic>.from(
           (intentEnvelope['intent'] as Map).cast<String, dynamic>());
       try {
-        await ref.read(apiProvider).commitCanonicalMoney({
+        final payload = <String, dynamic>{
           'captureId': captureId,
           'exactMinorUnits': row['exact_minor_units'],
           'currency': row['currency'],
@@ -443,7 +443,22 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
           'paymentMethod': row['payment_method'],
           'schemaVersion': 2,
           'intent': intent,
-        });
+        };
+        // Use SessionManager's authenticated request so an expired access
+        // token is refreshed in-place instead of stranding the outbox until
+        // the desktop app is restarted.
+        try {
+          await ref.read(authManagerProvider).authenticatedRequest(
+                'POST',
+                '/api/v2/capture/commits',
+                body: payload,
+              );
+        } on ApiFailure catch (error) {
+          throw CanonicalCommitException(
+            error.statusCode ?? 401,
+            error.code,
+          );
+        }
         synced.add(captureId);
         _reportCaptureRolloutMetric('v2_money_sync_acknowledged');
       } on CanonicalCommitException catch (error) {
@@ -791,7 +806,11 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
   void _reportCaptureRolloutMetric(String event) {
     unawaited(() async {
       try {
-        await ref.read(apiProvider).reportCaptureRolloutMetric(event);
+        await ref.read(authManagerProvider).authenticatedRequest(
+          'POST',
+          '/api/v2/capture/rollout/metrics',
+          body: {'event': event},
+        );
       } catch (_) {
         // Telemetry is deliberately best effort and contains no raw capture.
       }
@@ -963,7 +982,8 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
     if (edited.intent is MoneyIntentV2 && envelope.intent is MoneyIntentV2) {
       final before = envelope.intent as MoneyIntentV2;
       final after = edited.intent as MoneyIntentV2;
-      if (before.account != after.account || before.category != after.category) {
+      if (before.account != after.account ||
+          before.category != after.category) {
         _reportCaptureRolloutMetric('v2_money_review_edited');
       }
     }
@@ -1539,22 +1559,19 @@ class _AssistantHomeState extends ConsumerState<AssistantHome>
                   FilledButton.tonalIcon(
                     onPressed: () {
                       ref
-                          .read(
-                              legacyMigrationEmptyScopeRequestedProvider
-                                  .notifier)
+                          .read(legacyMigrationEmptyScopeRequestedProvider
+                              .notifier)
                           .state = true;
                       ref.invalidate(databaseProvider);
                     },
                     icon: const Icon(Icons.add_circle_outline),
-                    label: const Text(
-                        'Продолжить с пустым пространством'),
+                    label: const Text('Продолжить с пустым пространством'),
                   ),
                   const SizedBox(height: 8),
                   OutlinedButton.icon(
                     onPressed: () => unawaited(manager.logout()),
                     icon: const Icon(Icons.logout_outlined),
-                    label: const Text(
-                        'Выйти и войти в прежний аккаунт'),
+                    label: const Text('Выйти и войти в прежний аккаунт'),
                   ),
                   if (canClaim) ...[
                     const SizedBox(height: 20),
